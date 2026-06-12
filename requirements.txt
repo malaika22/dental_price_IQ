@@ -1,0 +1,11 @@
+fastapi>=0.110
+uvicorn>=0.29
+pydantic>=2.6
+PyMuPDF>=1.24
+openpyxl>=3.1
+groq>=1.0
+requests>=2.31
+python-multipart>=0.0.9
+# OCR fallback (Format 2), optional:
+# pytesseract>=0.3.10
+# Pillow>=10.0

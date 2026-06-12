@@ -1,0 +1,5 @@
+# Equivalency reference table (Stage 2). Client-maintained.
+# Format:  SCHEIN_SKU | equivalent product name | brand (optional) | note (optional)
+# Lines starting with # are ignored. Examples (replace with real mappings):
+# 1126830 | House Brand Nitrile Exam Gloves Small 300/Bx | | client approved generic
+# 1071379 | Benda Micro Applicators Fine 100/Bx | Centrix | same applicator class

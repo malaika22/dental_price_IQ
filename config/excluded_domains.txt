@@ -1,0 +1,13 @@
+# Domains never used as price sources. One per line. Subdomains are
+# excluded automatically. Client-editable — no code changes needed.
+henryschein.com
+ebay.com
+amazon.com
+walmart.com
+alibaba.com
+aliexpress.com
+google.com
+bing.com
+pinterest.com
+facebook.com
+youtube.com
