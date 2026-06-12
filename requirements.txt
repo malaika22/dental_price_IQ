@@ -6,6 +6,7 @@ openpyxl>=3.1
 groq>=1.0
 requests>=2.31
 python-multipart>=0.0.9
+python-dotenv>=1.0
 # OCR fallback (Format 2), optional:
 # pytesseract>=0.3.10
 # Pillow>=10.0
