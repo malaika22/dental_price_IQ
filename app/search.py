@@ -38,8 +38,22 @@ log = logging.getLogger(__name__)
 SERPAPI_KEY = os.environ.get("SERPAPI_API_KEY", "")
 FIRECRAWL_KEY = os.environ.get("FIRECRAWL_API_KEY", "")
 FIRECRAWL_MAX_SCRAPES = int(os.environ.get("FIRECRAWL_MAX_SCRAPES_PER_RUN", "150"))
-_fc_state = {"exhausted": False, "scrapes": 0}
+_fc_state = {"exhausted": False, "scrapes": 0, "credits": 0}
 _fc_lock = threading.Lock()
+# Total Firecrawl credit budget for a run and the slice reserved exclusively
+# for the stage-3 supplier fallback (so open-web /search can't drain it all).
+FIRECRAWL_RUN_CREDITS = int(os.environ.get("FIRECRAWL_RUN_CREDITS", "1000"))
+FIRECRAWL_STAGE3_RESERVE = int(os.environ.get("FIRECRAWL_STAGE3_RESERVE", "50"))
+
+
+def _fc_credits_left() -> int:
+    with _fc_lock:
+        return FIRECRAWL_RUN_CREDITS - _fc_state["credits"]
+
+
+def _fc_add_credits(n: int):
+    with _fc_lock:
+        _fc_state["credits"] += max(0, int(n or 0))
 
 
 def reset_firecrawl_budget():
@@ -47,10 +61,13 @@ def reset_firecrawl_budget():
     with _fc_lock:
         _fc_state["exhausted"] = False
         _fc_state["scrapes"] = 0
+        _fc_state["credits"] = 0
     _gp_state["disabled"] = False
     _gp_state["failures"] = 0
     _serp_state["exhausted"] = False
     _serp_state["consecutive_failures"] = 0
+    _shop_state["disabled"] = False
+    _shop_state["zero_streak"] = 0
 CONFIG_DIR = Path(os.environ.get("CONFIG_DIR", Path(__file__).resolve().parent.parent / "config"))
 
 PRICE_RE = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)")
@@ -115,6 +132,49 @@ def load_supplier_sites() -> List[str]:
 
 
 SUPPLIER_SITES = load_supplier_sites()
+
+# Per-SKU discovery cache (loaded from DB at run start, flushed at run end).
+# Maps schein_sku -> list[url]. Skips re-discovery of repeat items.
+_disc_cache = {}          # sku -> [urls]      (read-only during the run)
+_disc_new = {}            # sku -> [urls]      (discovered this run, to persist)
+_disc_lock = threading.Lock()
+DISCOVERY_CACHE_DAYS = int(os.environ.get("DISCOVERY_CACHE_DAYS", "7"))
+DISCOVERY_CACHE_ENABLED = os.environ.get("DISCOVERY_CACHE", "1") not in ("0", "false", "False")
+
+
+def load_discovery_cache(conn) -> None:
+    """Populate the in-memory discovery cache from the DB once per run."""
+    _disc_cache.clear(); _disc_new.clear()
+    if not (DISCOVERY_CACHE_ENABLED and conn):
+        return
+    try:
+        from . import db
+        cur = conn.cursor()
+        cur.execute("SELECT schein_sku FROM discovery_cache WHERE "
+                    "discovered_at >= datetime('now', ?)",
+                    (f"-{DISCOVERY_CACHE_DAYS} days",))
+        for (sku,) in cur.fetchall():
+            urls = db.get_cached_discovery(conn, sku, DISCOVERY_CACHE_DAYS)
+            if urls:
+                _disc_cache[sku] = urls
+        if _disc_cache:
+            log.info("Discovery cache: %d SKU(s) loaded (<%d days old) — repeat "
+                     "items will skip re-discovery", len(_disc_cache), DISCOVERY_CACHE_DAYS)
+    except Exception as e:
+        log.debug("discovery cache load skipped: %s", e)
+
+
+def flush_discovery_cache(conn) -> None:
+    """Persist URLs discovered this run back to the DB."""
+    if not (DISCOVERY_CACHE_ENABLED and conn and _disc_new):
+        return
+    try:
+        from . import db
+        for sku, urls in _disc_new.items():
+            db.save_discovery(conn, sku, urls)
+        log.info("Discovery cache: persisted %d SKU(s) for future runs", len(_disc_new))
+    except Exception as e:
+        log.debug("discovery cache flush skipped: %s", e)
 if SUPPLIER_SITES:
     log.info("Trusted-supplier sweep ENABLED — %d domains from %s",
              len(SUPPLIER_SITES), CONFIG_DIR / "supplier_sites.txt")
@@ -273,6 +333,11 @@ def _item_queries(item: OrderLineItem) -> List[str]:
 
 
 _gp_state = {"disabled": False, "failures": 0}
+# google_shopping auto-skip: if it yields 0 usable candidates for this many
+# items in a row, stop calling it for the rest of the run (logs show it
+# consistently returning 0 usable on this SerpAPI plan). Saves 1 call/query/item.
+_shop_state = {"disabled": False, "zero_streak": 0}
+SHOP_DISABLE_AFTER = int(os.environ.get("GOOGLE_SHOPPING_DISABLE_AFTER", "3"))
 
 
 def _resolve_google_product(product_id: str, cands: list, seen: set,
@@ -422,6 +487,56 @@ def _supplier_site_sweep(item: OrderLineItem, cands: list, seen: set,
     return added
 
 
+def _firecrawl_search(query: str, cands: list, seen: set, *,
+                      include_domains: list | None = None, limit: int = 10,
+                      stage: str = "fc") -> int:
+    """Discovery-only Firecrawl /v2/search (no scrapeOptions → 2 credits/10
+    results). Returns url/title/description which we map into PriceCandidates;
+    the existing shortlist + early-stop then gates which ones get scraped, so
+    this never triggers a scrape explosion. Used for SerpAPI fallback (open
+    web) and the stage-3 supplier fallback (includeDomains filter)."""
+    if not FIRECRAWL_KEY:
+        return 0
+    body = {"query": query, "limit": limit, "sources": ["web"]}
+    if include_domains:
+        body["includeDomains"] = include_domains   # restrict to trusted suppliers
+    try:
+        r = requests.post("https://api.firecrawl.dev/v2/search",
+                           headers={"Authorization": f"Bearer {FIRECRAWL_KEY}",
+                                    "Content-Type": "application/json"},
+                           json=body, timeout=60)
+        if r.status_code == 402:
+            _mark_firecrawl_exhausted("402", tag=f"{stage} search ")
+            return 0
+        r.raise_for_status()
+        payload = r.json()
+    except Exception as e:
+        log.warning("Firecrawl /search (%s) failed for %r: %s", stage, query[:50], e)
+        return 0
+    # account credits actually billed (fallback to the documented 2/10 rule)
+    used = payload.get("creditsUsed")
+    if used is None:
+        used = max(2, -(-limit // 10) * 2)
+    _fc_add_credits(used)
+    web = (payload.get("data") or {}).get("web") or []
+    added = 0
+    for r0 in web:
+        url = canonical_url(r0.get("url") or r0.get("metadata", {}).get("sourceURL") or "")
+        if not usable(url) or url in seen:
+            continue
+        seen.add(url)
+        cands.append(PriceCandidate(
+            title=r0.get("title", ""), url=url,
+            source_site=_domain(url),
+            price=_parse_price(r0.get("description", "")),   # snippet may carry a price
+        ))
+        added += 1
+    if added:
+        log.info("Firecrawl /search (%s) — +%d candidate(s) for %r (credits used=%s, left=%d)",
+                 stage, added, query[:40], used, _fc_credits_left())
+    return added
+
+
 def market_sweep(item: OrderLineItem, max_candidates: int = 14) -> tuple[List[PriceCandidate], List[str]]:
     """Broad public sweep. Runs on EVERY item EVERY run (PRD 4.2)."""
     queries = _item_queries(item)
@@ -432,29 +547,60 @@ def market_sweep(item: OrderLineItem, max_candidates: int = 14) -> tuple[List[Pr
     flagged: List[str] = []
     seen: set[str] = set()
 
-    if not SERPAPI_KEY:
-        log.warning("SKU %s — SerpAPI key missing; sweep skipped", item.schein_sku)
-        return [], flagged
+    # --- DISCOVERY CACHE HIT: reuse known URLs, skip all discovery API calls ---
+    # (Prices are still scraped fresh downstream, so report prices never go
+    #  stale from this cache — only discovery calls are saved.)
+    cached_urls = _disc_cache.get(item.schein_sku) if DISCOVERY_CACHE_ENABLED else None
+    if cached_urls:
+        for url in cached_urls:
+            cu = canonical_url(url)
+            if usable(cu) and cu not in seen:
+                seen.add(cu)
+                cands.append(PriceCandidate(title="", url=cu, source_site=_domain(cu), price=None))
+        if cands:
+            log.info("SKU %s — discovery CACHE HIT: %d known URL(s), skipping search "
+                     "(scrapes still run fresh)", item.schein_sku, len(cands))
+            shortlist = _shortlist(cands, max_candidates)
+            return shortlist, flagged
 
-    for qi, query in enumerate(queries, start=1):
-        # 1. Google Shopping — structured prices
-        try:
-            data = _serpapi({"engine": "google_shopping", "q": query,
-                             "gl": "us", "hl": "en", "num": 40})
-            budget = [3]            # max google_product seller-resolutions per query
-            raw = len(data.get("shopping_results") or []) + len(data.get("shopping_ads") or [])
-            n = _collect(data.get("shopping_results"), "shopping", cands, seen,
-                         resolve_budget=budget)
-            n += _collect(data.get("shopping_ads"), "shopping_ads", cands, seen,
-                          resolve_budget=budget)
-            log.info("SKU %s — q%d google_shopping: %d raw → %d usable "
-                     "(resolved %d google product link(s))",
-                     item.schein_sku, qi, raw, n, 3 - budget[0])
-            if raw == 0:
-                log.warning("SKU %s — q%d google_shopping returned EMPTY response "
-                            "(API/engine issue, not filtering)", item.schein_sku, qi)
-        except Exception as e:
-            log.error("SKU %s — q%d google_shopping FAILED: %s", item.schein_sku, qi, e)
+    serp_ok = bool(SERPAPI_KEY) and not _serp_state["exhausted"]
+    if not SERPAPI_KEY:
+        log.warning("SKU %s — SerpAPI key missing; will rely on Firecrawl /search",
+                    item.schein_sku)
+
+    # ---- STAGE 1: SerpAPI discovery (primary) ---------------------------
+    for qi, query in enumerate(queries, start=1) if serp_ok else []:
+        # 1. Google Shopping — structured prices. Auto-skipped once it proves
+        #    unproductive (0 usable for SHOP_DISABLE_AFTER items in a row),
+        #    saving one SerpAPI call per query on the rest of the run.
+        if not _shop_state["disabled"]:
+            try:
+                data = _serpapi({"engine": "google_shopping", "q": query,
+                                 "gl": "us", "hl": "en", "num": 40})
+                budget = [3]
+                raw = len(data.get("shopping_results") or []) + len(data.get("shopping_ads") or [])
+                n = _collect(data.get("shopping_results"), "shopping", cands, seen,
+                             resolve_budget=budget)
+                n += _collect(data.get("shopping_ads"), "shopping_ads", cands, seen,
+                              resolve_budget=budget)
+                log.info("SKU %s — q%d google_shopping: %d raw → %d usable "
+                         "(resolved %d google product link(s))",
+                         item.schein_sku, qi, raw, n, 3 - budget[0])
+                # track productivity: only the FIRST query per item votes, to
+                # avoid double-counting; a single usable result resets the streak
+                if qi == 1:
+                    if n == 0:
+                        _shop_state["zero_streak"] += 1
+                        if _shop_state["zero_streak"] >= SHOP_DISABLE_AFTER:
+                            _shop_state["disabled"] = True
+                            log.warning("google_shopping disabled for this run after "
+                                        "%d items with 0 usable results — relying on "
+                                        "organic+ads (saves 1 SerpAPI call/query).",
+                                        SHOP_DISABLE_AFTER)
+                    else:
+                        _shop_state["zero_streak"] = 0
+            except Exception as e:
+                log.error("SKU %s — q%d google_shopping FAILED: %s", item.schein_sku, qi, e)
 
         # 2. Google organic + PAID ADS + inline shopping ads
         try:
@@ -468,12 +614,50 @@ def market_sweep(item: OrderLineItem, max_candidates: int = 14) -> tuple[List[Pr
         except Exception as e:
             log.error("SKU %s — q%d organic/ads FAILED: %s", item.schein_sku, qi, e)
 
-    # Direct trusted-supplier searches (config-driven) — closes the gap where
-    # the cheapest pages (Curio, Surgimac, Frontier, Pearson…) are absent from
-    # generic SerpAPI results.
-    _supplier_site_sweep(item, cands, seen)
+    # Direct trusted-supplier searches via SerpAPI (only while SerpAPI lives).
+    if serp_ok and not _serp_state["exhausted"]:
+        _supplier_site_sweep(item, cands, seen)
+
+    # ---- STAGE 2: Firecrawl /search open-web fallback -------------------
+    # Fires when SerpAPI is unavailable/exhausted. Discovery-only (2 credits per
+    # 10 results); the shortlist + early-stop still gate scraping. Stops short
+    # of the reserved floor so stage 3 always has credits.
+    serp_dead = (not SERPAPI_KEY) or _serp_state["exhausted"]
+    if serp_dead and not _fc_state["exhausted"]:
+        if _fc_credits_left() > FIRECRAWL_STAGE3_RESERVE:
+            log.info("SKU %s — SerpAPI unavailable; STAGE 2 Firecrawl /search "
+                     "(open web), credits left=%d", item.schein_sku, _fc_credits_left())
+            for query in queries:
+                if _fc_credits_left() <= FIRECRAWL_STAGE3_RESERVE:
+                    log.info("SKU %s — hit stage-3 reserve floor (%d); stopping open-web search",
+                             item.schein_sku, FIRECRAWL_STAGE3_RESERVE)
+                    break
+                _firecrawl_search(query, cands, seen, limit=10, stage="stage2-web")
+
+        # ---- STAGE 3: Firecrawl /search restricted to trusted suppliers ----
+        # Last resort, funded by the reserved credit floor. includeDomains keeps
+        # results on the client's trusted supplier list only.
+        if SUPPLIER_SITES and not _fc_state["exhausted"] and _fc_credits_left() > 0:
+            base = (item.mpn_query or item.search_query or item.description or "").strip()
+            variant = (item.variant or "").strip()
+            if variant and variant.lower() not in base.lower():
+                base = f"{base} {variant}"
+            if base:
+                log.info("SKU %s — STAGE 3 supplier fallback (reserve=%d credits): "
+                         "Firecrawl /search restricted to %d trusted domains",
+                         item.schein_sku, FIRECRAWL_STAGE3_RESERVE,
+                         min(len(SUPPLIER_SITES), 10))
+                # one combined includeDomains search is far cheaper than N site: calls
+                _firecrawl_search(base, cands, seen,
+                                  include_domains=SUPPLIER_SITES[:10],
+                                  limit=10, stage="stage3-suppliers")
 
     shortlist = _shortlist(cands, max_candidates)
+    # record discovered URLs for future runs (all candidates, not just shortlist,
+    # so next run has the full set to re-rank against fresh prices)
+    if DISCOVERY_CACHE_ENABLED and cands:
+        with _disc_lock:
+            _disc_new[item.schein_sku] = [c.url for c in cands]
     if shortlist:
         log.info("SKU %s — sweep done: %d/%d shortlisted (cheapest=$%s at %s)",
                  item.schein_sku, len(shortlist), len(cands),
@@ -528,6 +712,10 @@ def firecrawl_verify(c: PriceCandidate, sku: str = "") -> PriceCandidate:
                 "onlyMainContent": True,
                 "waitFor": 3000,
                 "timeout": 45000,
+                # serve a cached page if it was scraped within FIRECRAWL_MAX_AGE_MS
+                # (default 7 days) — cheaper + faster. Prices rarely move week-to-
+                # week; set FIRECRAWL_MAX_AGE_MS=0 to always fetch fresh.
+                "maxAge": int(os.environ.get("FIRECRAWL_MAX_AGE_MS", str(7 * 24 * 60 * 60 * 1000))),
             },
             timeout=70,
         )

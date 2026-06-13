@@ -28,15 +28,6 @@ OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 
-def _process_item_safe(item) -> ItemResult:
-    """Catch per-item crashes so one SKU cannot 500 the whole pipeline."""
-    try:
-        return matcher.process_item(item)
-    except Exception:
-        log.exception("Stage 1 failed for SKU %s", item.schein_sku)
-        return ItemResult(item=item)
-
-
 def run_pipeline(pdf_path: str | Path, parallel: int = 2,
                  skip_search: bool = False) -> dict:
     """Full Stage 1+2 run for one order PDF. Returns paths of the 3 reports.
@@ -44,13 +35,16 @@ def run_pipeline(pdf_path: str | Path, parallel: int = 2,
     skip_search=True runs intake + AI parsing + report scaffolding only
     (used for parser validation / dry runs without API spend).
     """
-    try:
-        order = parser.parse_order_pdf(pdf_path)
-    except Exception as e:
-        raise ValueError(f"Could not read PDF: {e}") from e
+    order = parser.parse_order_pdf(pdf_path)
     search_mod.reset_firecrawl_budget()
     if not order.items:
         raise ValueError(f"No line items extracted from {pdf_path}")
+
+    # open DB up front so the per-SKU discovery cache can be loaded before the
+    # sweep (skips re-discovery of repeat items across runs)
+    conn = db.connect(OUTPUT_DIR / "dental_intel.sqlite3")
+    if not skip_search:
+        search_mod.load_discovery_cache(conn)
     log.info("Parsed %d items from %s (ref %s)", len(order.items),
              order.source_file, order.reference)
 
@@ -66,28 +60,24 @@ def run_pipeline(pdf_path: str | Path, parallel: int = 2,
         # Stage 1 — market sweep + verification + 4-criteria matching,
         # parallel across items
         with ThreadPoolExecutor(max_workers=parallel) as ex:
-            results = list(ex.map(_process_item_safe, order.items))
+            results = list(ex.map(matcher.process_item, order.items))
 
         # Stage 2 — equivalency, table-driven
         entries = matcher.load_equivalency_table(CONFIG_DIR)
         for r in results:
-            try:
-                f = matcher.run_equivalency(r, entries)
-                if f:
-                    findings.append(f)
-            except Exception:
-                log.exception("Stage 2 failed for SKU %s", r.item.schein_sku)
+            f = matcher.run_equivalency(r, entries)
+            if f:
+                findings.append(f)
 
     stem = (order.reference or Path(pdf_path).stem).replace("/", "_")
     p1 = reports.write_price_match_report(order, results, OUTPUT_DIR / f"{stem}_price_match.xlsx")
     p2 = reports.write_alternate_purchase_list(order, findings, OUTPUT_DIR / f"{stem}_alternate_purchases.xlsx", results=results)
     p3 = reports.write_evidence_file(order, results, findings, OUTPUT_DIR / f"{stem}_evidence.xlsx")
 
-    conn = db.connect(OUTPUT_DIR / "dental_intel.sqlite3")
+    if not skip_search:
+        search_mod.flush_discovery_cache(conn)
     db.persist_run(conn, order, results, findings)
     conn.close()
-
-    search_mod.firecrawl_log_run_summary(order.reference)
 
     return {
         "reference": order.reference,
@@ -118,9 +108,6 @@ async def run_order(file: UploadFile):
     try:
         summary = run_pipeline(tmp_path)
         return JSONResponse(summary)
-    except ValueError as e:
-        log.warning("pipeline rejected: %s", e)
-        return JSONResponse({"error": str(e)}, status_code=400)
     except Exception as e:
         log.exception("pipeline failed")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -128,10 +115,7 @@ async def run_order(file: UploadFile):
 
 @app.get("/reports/{name}")
 def get_report(name: str):
-    safe_name = Path(name).name
-    if safe_name != name:
-        return JSONResponse({"error": "invalid filename"}, status_code=400)
-    f = OUTPUT_DIR / safe_name
+    f = OUTPUT_DIR / name
     if not f.exists() or f.suffix != ".xlsx":
         return JSONResponse({"error": "not found"}, status_code=404)
     return FileResponse(f)

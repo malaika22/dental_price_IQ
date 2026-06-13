@@ -2,11 +2,8 @@
 (tables present, empty — PRD Section 10)."""
 from __future__ import annotations
 import json
-import logging
 import sqlite3
 from pathlib import Path
-
-log = logging.getLogger(__name__)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS orders (
@@ -39,6 +36,15 @@ CREATE TABLE IF NOT EXISTS equivalency_findings (
     equivalent_name TEXT, confidence_level TEXT, basis TEXT,
     supplier TEXT, url TEXT, price REAL, est_savings_total REAL
 );
+-- Per-SKU discovery cache (optimization): remembers which candidate URLs were
+-- found for a SKU so repeat orders skip re-discovery. Prices are NOT cached
+-- here — pages are always re-scraped fresh — so report prices never go stale
+-- from this cache; only discovery API calls are saved.
+CREATE TABLE IF NOT EXISTS discovery_cache (
+    schein_sku TEXT PRIMARY KEY,
+    urls_json TEXT,
+    discovered_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 -- Stage 3 (order generation) — schema reserved, unused in Stage 1+2
 CREATE TABLE IF NOT EXISTS order_history (
     id INTEGER PRIMARY KEY,
@@ -66,31 +72,13 @@ def connect(db_path: str | Path = "dental_intel.sqlite3") -> sqlite3.Connection:
     return conn
 
 
-def _delete_order(cur, order_id: int) -> None:
-    """Remove a prior run and its children (re-upload of the same reference)."""
-    cur.execute(
-        "DELETE FROM price_findings WHERE order_item_id IN "
-        "(SELECT id FROM order_items WHERE order_id=?)", (order_id,))
-    cur.execute(
-        "DELETE FROM equivalency_findings WHERE order_item_id IN "
-        "(SELECT id FROM order_items WHERE order_id=?)", (order_id,))
-    cur.execute("DELETE FROM order_items WHERE order_id=?", (order_id,))
-    cur.execute("DELETE FROM orders WHERE id=?", (order_id,))
-
-
 def persist_run(conn, order, results, findings) -> int:
     cur = conn.cursor()
-    if order.reference:
-        cur.execute("SELECT id FROM orders WHERE reference=?", (order.reference,))
-        row = cur.fetchone()
-        if row:
-            _delete_order(cur, row[0])
     cur.execute(
-        "INSERT INTO orders(reference, order_date, source_file, total_price)"
+        "INSERT OR REPLACE INTO orders(reference, order_date, source_file, total_price)"
         " VALUES (?,?,?,?)",
         (order.reference, order.order_date, order.source_file, order.total_price))
     order_id = cur.lastrowid
-    finding_count = 0
     for r in results:
         i = r.item
         cur.execute(
@@ -109,7 +97,6 @@ def persist_run(conn, order, results, findings) -> int:
                 (item_id, c.title, c.url, c.source_site, c.price, c.pack_qty,
                  c.pack_condition, c.match_type, c.confidence,
                  json.dumps(c.criteria), c.rejected_reason or c.notes))
-            finding_count += 1
     sku_to_item = {}
     cur.execute("SELECT id, schein_sku FROM order_items WHERE order_id=?", (order_id,))
     for row in cur.fetchall():
@@ -123,8 +110,35 @@ def persist_run(conn, order, results, findings) -> int:
              f.confidence_level, f.basis, f.supplier, f.url, f.price,
              f.est_savings_total))
     conn.commit()
-    log.info(
-        "Persisted order ref=%s — %d items, %d price findings, %d equivalency findings",
-        order.reference, len(results), finding_count, len(findings),
-    )
     return order_id
+
+
+# ---------------------------------------------------- discovery cache -------
+
+def get_cached_discovery(conn, schein_sku: str, max_age_days: int = 7) -> list | None:
+    """Return cached candidate URLs for a SKU if discovered within max_age_days,
+    else None. Used to skip re-discovery of repeat items across runs."""
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT urls_json FROM discovery_cache WHERE schein_sku=? AND "
+        "discovered_at >= datetime('now', ?)",
+        (schein_sku, f"-{int(max_age_days)} days"))
+    row = cur.fetchone()
+    if not row:
+        return None
+    try:
+        urls = json.loads(row[0])
+        return urls if isinstance(urls, list) and urls else None
+    except Exception:
+        return None
+
+
+def save_discovery(conn, schein_sku: str, urls: list) -> None:
+    """Persist the discovered candidate URLs for a SKU (refreshes timestamp)."""
+    if not urls:
+        return
+    conn.execute(
+        "INSERT OR REPLACE INTO discovery_cache(schein_sku, urls_json, discovered_at)"
+        " VALUES (?,?,datetime('now'))",
+        (schein_sku, json.dumps(list(urls)[:40])))
+    conn.commit()
