@@ -34,12 +34,46 @@ import requests
 from .models import OrderLineItem, PriceCandidate
 
 log = logging.getLogger(__name__)
+fc_credit_log = logging.getLogger("firecrawl.credits")
 
 SERPAPI_KEY = os.environ.get("SERPAPI_API_KEY", "")
 FIRECRAWL_KEY = os.environ.get("FIRECRAWL_API_KEY", "")
 FIRECRAWL_MAX_SCRAPES = int(os.environ.get("FIRECRAWL_MAX_SCRAPES_PER_RUN", "150"))
-_fc_state = {"exhausted": False, "scrapes": 0, "credits": 0}
+_fc_state = {
+    "exhausted": False,
+    "exhausted_reason": None,
+    "scrapes": 0,
+    "skipped": 0,
+    "credits": 0,
+}
 _fc_lock = threading.Lock()
+
+
+def _mark_firecrawl_exhausted(reason: str, *, url: str = "", tag: str = "") -> None:
+    """Log once when Firecrawl can no longer scrape this run."""
+    with _fc_lock:
+        if _fc_state["exhausted"]:
+            return
+        _fc_state["exhausted"] = True
+        _fc_state["exhausted_reason"] = reason
+    where = f" (triggered by {tag}{url[:80]})" if url else ""
+    if reason == "402":
+        fc_credit_log.error(
+            "========== FIRECRAWL CREDITS EXHAUSTED (HTTP 402) ==========\n"
+            "Firecrawl rejected the scrape — account credits are used up.\n"
+            "All further page verifications THIS RUN will be skipped.\n"
+            "Impact: candidates stay unverified; Price Match report may be empty.\n"
+            "Fix: top up at https://www.firecrawl.dev/ then re-run the order.\n"
+            "First failing URL%s",
+            where,
+        )
+    elif reason == "budget":
+        fc_credit_log.warning(
+            "========== FIRECRAWL SCRAPE BUDGET REACHED ==========\n"
+            "Per-run cap FIRECRAWL_MAX_SCRAPES_PER_RUN=%d reached — no more scrapes this run.\n"
+            "Raise the cap in .env if you intended to scrape more pages.",
+            FIRECRAWL_MAX_SCRAPES,
+        )
 # Total Firecrawl credit budget for a run and the slice reserved exclusively
 # for the stage-3 supplier fallback (so open-web /search can't drain it all).
 FIRECRAWL_RUN_CREDITS = int(os.environ.get("FIRECRAWL_RUN_CREDITS", "1000"))
@@ -60,7 +94,9 @@ def reset_firecrawl_budget():
     """Call at the start of each pipeline run."""
     with _fc_lock:
         _fc_state["exhausted"] = False
+        _fc_state["exhausted_reason"] = None
         _fc_state["scrapes"] = 0
+        _fc_state["skipped"] = 0
         _fc_state["credits"] = 0
     _gp_state["disabled"] = False
     _gp_state["failures"] = 0
@@ -68,6 +104,43 @@ def reset_firecrawl_budget():
     _serp_state["consecutive_failures"] = 0
     _shop_state["disabled"] = False
     _shop_state["zero_streak"] = 0
+
+
+def firecrawl_stats() -> dict:
+    """Scrape budget used this run (logged at pipeline end)."""
+    with _fc_lock:
+        return {
+            "scrapes": _fc_state["scrapes"],
+            "skipped": _fc_state["skipped"],
+            "exhausted": _fc_state["exhausted"],
+            "exhausted_reason": _fc_state["exhausted_reason"],
+        }
+
+
+def firecrawl_log_run_summary(order_ref: str | None = None) -> None:
+    """End-of-run summary on the dedicated firecrawl.credits logger."""
+    fc = firecrawl_stats()
+    ref = f" ref={order_ref}" if order_ref else ""
+    if fc["exhausted"] and fc["exhausted_reason"] == "402":
+        fc_credit_log.error(
+            "========== FIRECRAWL RUN SUMMARY%s ==========\n"
+            "Status: CREDITS EXHAUSTED — %d page(s) scraped, %d candidate(s) skipped.\n"
+            "Price Match quality was degraded. Top up Firecrawl credits and re-run.",
+            ref, fc["scrapes"], fc["skipped"],
+        )
+    elif fc["exhausted"] and fc["exhausted_reason"] == "budget":
+        fc_credit_log.warning(
+            "========== FIRECRAWL RUN SUMMARY%s ==========\n"
+            "Status: per-run scrape budget reached — %d scraped, %d skipped.",
+            ref, fc["scrapes"], fc["skipped"],
+        )
+    else:
+        fc_credit_log.info(
+            "Firecrawl run summary%s: %d scrape(s), %d skipped, credits OK",
+            ref, fc["scrapes"], fc["skipped"],
+        )
+
+
 CONFIG_DIR = Path(os.environ.get("CONFIG_DIR", Path(__file__).resolve().parent.parent / "config"))
 
 PRICE_RE = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)")
@@ -690,9 +763,17 @@ def firecrawl_verify(c: PriceCandidate, sku: str = "") -> PriceCandidate:
     tag = f"SKU {sku} — " if sku else ""
     with _fc_lock:
         if _fc_state["exhausted"]:
-            c.notes = "scrape skipped — Firecrawl credits exhausted (402) earlier in this run"
+            _fc_state["skipped"] += 1
+            reason = _fc_state["exhausted_reason"]
+            c.notes = (
+                "scrape skipped — Firecrawl credits exhausted (402) earlier in this run"
+                if reason == "402"
+                else f"scrape skipped — per-run budget of {FIRECRAWL_MAX_SCRAPES} scrapes reached"
+            )
             return c
         if _fc_state["scrapes"] >= FIRECRAWL_MAX_SCRAPES:
+            _mark_firecrawl_exhausted("budget")
+            _fc_state["skipped"] += 1
             c.notes = f"scrape skipped — per-run budget of {FIRECRAWL_MAX_SCRAPES} scrapes reached"
             return c
         _fc_state["scrapes"] += 1
@@ -726,12 +807,7 @@ def firecrawl_verify(c: PriceCandidate, sku: str = "") -> PriceCandidate:
         status = getattr(e.response, "status_code", None)
         log.error("%sscrape FAILED (%s) for %s", tag, status, c.url[:80])
         if status == 402:
-            with _fc_lock:
-                if not _fc_state["exhausted"]:
-                    _fc_state["exhausted"] = True
-                    log.error("FIRECRAWL CREDITS EXHAUSTED (402) — all further "
-                              "scrapes this run will be skipped; candidates will be "
-                              "marked unverified. Top up the Firecrawl plan and re-run.")
+            _mark_firecrawl_exhausted("402", url=c.url, tag=tag)
             c.notes = "not verified — Firecrawl credits exhausted (402)"
             return c
         if status in (404, 410):

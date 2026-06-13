@@ -79,6 +79,14 @@ def run_pipeline(pdf_path: str | Path, parallel: int = 2,
     db.persist_run(conn, order, results, findings)
     conn.close()
 
+    if not skip_search:
+        search_mod.firecrawl_log_run_summary(order.reference)
+        fc = search_mod.firecrawl_stats()
+        log.info(
+            "=== Pipeline complete: ref=%s items=%d firecrawl_scrapes=%d skipped=%d exhausted=%s ===",
+            order.reference, len(order.items), fc["scrapes"], fc["skipped"], fc["exhausted"],
+        )
+
     return {
         "reference": order.reference,
         "items": len(order.items),
