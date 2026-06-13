@@ -200,7 +200,11 @@ def parse_items_batch(items: List[OrderLineItem], chunk_size: int = 12) -> List[
         lines = "\n".join(
             f'{i.schein_sku} | "{i.description}" | UOM {i.uom}' for i in chunk
         )
-        data = _ask_json(PARSE_PROMPT.format(lines=lines), max_tokens=4000)
+        try:
+            data = _ask_json(PARSE_PROMPT.format(lines=lines), max_tokens=4000)
+        except Exception:
+            log.exception("Groq parse chunk failed — chunk items fall back to raw descriptions")
+            continue
         for d in _results(data):
             by_sku[str(d.get("sku"))] = d
     for it in items:
@@ -276,19 +280,26 @@ def validate_candidates(item: OrderLineItem, cands: List[PriceCandidate]) -> Lis
             "scraped_variant": c.scraped_variant, "pack_qty": c.pack_qty,
         }) for i, c in enumerate(cands)
     )
-    data = _ask_json(VALIDATE_PROMPT.format(
-        brand=item.brand, product_name=item.product_name,
-        size_form=item.size_form, variant=item.variant,
-        pack_qty=item.pack_qty, description=item.description,
-        candidates=blob,
-    ), max_tokens=3000)
+    try:
+        data = _ask_json(VALIDATE_PROMPT.format(
+            brand=item.brand, product_name=item.product_name,
+            size_form=item.size_form, variant=item.variant,
+            pack_qty=item.pack_qty, description=item.description,
+            candidates=blob,
+        ), max_tokens=3000)
+    except Exception:
+        log.exception("Groq validate failed for SKU %s — candidates left unvalidated", item.schein_sku)
+        return cands
     for d in _results(data):
         try:
             c = cands[int(d["idx"])]
         except (KeyError, IndexError, ValueError, TypeError):
             continue
         c.match_type = d.get("match_type", "rejected")
-        c.confidence = int(d.get("confidence", 0))
+        try:
+            c.confidence = int(float(d.get("confidence", 0)))
+        except (TypeError, ValueError):
+            c.confidence = 0
         c.criteria = {k: bool(d.get(k)) for k in
                       ("brand_match", "name_match", "size_form_match", "pack_match")}
         c.pack_condition = d.get("pack_condition") or c.pack_condition
@@ -319,7 +330,14 @@ Return ONLY a JSON object:
 
 def evaluate_equivalency(item: OrderLineItem, equivalent_name: str,
                          note: str, market_summary: str) -> dict:
-    return _ask_json(EQUIV_PROMPT.format(
-        description=item.description, brand=item.brand, pack_qty=item.pack_qty,
-        equivalent=equivalent_name, note=note or "", market=market_summary or "none",
-    ), max_tokens=400)
+    try:
+        return _ask_json(EQUIV_PROMPT.format(
+            description=item.description, brand=item.brand, pack_qty=item.pack_qty,
+            equivalent=equivalent_name, note=note or "", market=market_summary or "none",
+        ), max_tokens=400)
+    except Exception:
+        log.exception("Groq equivalency failed for SKU %s", item.schein_sku)
+        return {
+            "confidence_level": "possible_alternative",
+            "basis": "AI equivalency check unavailable — manual review required",
+        }

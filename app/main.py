@@ -28,6 +28,15 @@ OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 
+def _process_item_safe(item) -> ItemResult:
+    """Catch per-item crashes so one SKU cannot 500 the whole pipeline."""
+    try:
+        return matcher.process_item(item)
+    except Exception:
+        log.exception("Stage 1 failed for SKU %s", item.schein_sku)
+        return ItemResult(item=item)
+
+
 def run_pipeline(pdf_path: str | Path, parallel: int = 2,
                  skip_search: bool = False) -> dict:
     """Full Stage 1+2 run for one order PDF. Returns paths of the 3 reports.
@@ -35,7 +44,10 @@ def run_pipeline(pdf_path: str | Path, parallel: int = 2,
     skip_search=True runs intake + AI parsing + report scaffolding only
     (used for parser validation / dry runs without API spend).
     """
-    order = parser.parse_order_pdf(pdf_path)
+    try:
+        order = parser.parse_order_pdf(pdf_path)
+    except Exception as e:
+        raise ValueError(f"Could not read PDF: {e}") from e
     search_mod.reset_firecrawl_budget()
     if not order.items:
         raise ValueError(f"No line items extracted from {pdf_path}")
@@ -49,7 +61,10 @@ def run_pipeline(pdf_path: str | Path, parallel: int = 2,
              order.source_file, order.reference)
 
     if not skip_search:
-        ai.parse_items_batch(order.items)        # batched Groq calls (chunked)
+        try:
+            ai.parse_items_batch(order.items)        # batched Groq calls (chunked)
+        except Exception:
+            log.exception("Groq parse failed — items will use raw descriptions as search queries")
 
     results: List[ItemResult] = []
     findings: List[EquivalencyFinding] = []
@@ -60,14 +75,17 @@ def run_pipeline(pdf_path: str | Path, parallel: int = 2,
         # Stage 1 — market sweep + verification + 4-criteria matching,
         # parallel across items
         with ThreadPoolExecutor(max_workers=parallel) as ex:
-            results = list(ex.map(matcher.process_item, order.items))
+            results = list(ex.map(_process_item_safe, order.items))
 
         # Stage 2 — equivalency, table-driven
         entries = matcher.load_equivalency_table(CONFIG_DIR)
         for r in results:
-            f = matcher.run_equivalency(r, entries)
-            if f:
-                findings.append(f)
+            try:
+                f = matcher.run_equivalency(r, entries)
+                if f:
+                    findings.append(f)
+            except Exception:
+                log.exception("Stage 2 failed for SKU %s", r.item.schein_sku)
 
     stem = (order.reference or Path(pdf_path).stem).replace("/", "_")
     p1 = reports.write_price_match_report(order, results, OUTPUT_DIR / f"{stem}_price_match.xlsx")
@@ -116,6 +134,9 @@ async def run_order(file: UploadFile):
     try:
         summary = run_pipeline(tmp_path)
         return JSONResponse(summary)
+    except ValueError as e:
+        log.warning("bad request: %s", e)
+        return JSONResponse({"error": str(e)}, status_code=400)
     except Exception as e:
         log.exception("pipeline failed")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -123,7 +144,7 @@ async def run_order(file: UploadFile):
 
 @app.get("/reports/{name}")
 def get_report(name: str):
-    f = OUTPUT_DIR / name
+    f = OUTPUT_DIR / Path(name).name
     if not f.exists() or f.suffix != ".xlsx":
         return JSONResponse({"error": "not found"}, status_code=404)
     return FileResponse(f)

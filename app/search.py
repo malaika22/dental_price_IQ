@@ -410,7 +410,7 @@ _gp_state = {"disabled": False, "failures": 0}
 # items in a row, stop calling it for the rest of the run (logs show it
 # consistently returning 0 usable on this SerpAPI plan). Saves 1 call/query/item.
 _shop_state = {"disabled": False, "zero_streak": 0}
-SHOP_DISABLE_AFTER = int(os.environ.get("GOOGLE_SHOPPING_DISABLE_AFTER", "3"))
+SHOP_DISABLE_AFTER = int(os.environ.get("GOOGLE_SHOPPING_DISABLE_AFTER", "1"))
 
 
 def _resolve_google_product(product_id: str, cands: list, seen: set,
@@ -610,6 +610,44 @@ def _firecrawl_search(query: str, cands: list, seen: set, *,
     return added
 
 
+def _firecrawl_supplier_gap_sweep(item: OrderLineItem, cands: list, seen: set) -> int:
+    """Replaces the SerpAPI `site:` supplier sweep. After organic discovery has
+    run, find which trusted suppliers ALREADY appeared in the candidate pool and
+    search Firecrawl ONLY for the suppliers still missing (the "gap"). One
+    Firecrawl /search with includeDomains covers the whole gap in a single call
+    (limit=20 → ~4 credits), versus 8+ separate SerpAPI site: searches.
+
+    Aggressive skip rule: a supplier counts as "covered" if ANY of its pages is
+    already in the pool, so it's dropped from the gap list."""
+    if not (FIRECRAWL_KEY and SUPPLIER_SITES):
+        return 0
+    # which trusted suppliers are already represented in the candidate pool?
+    found_domains = set()
+    for c in cands:
+        d = _domain(c.url)
+        for s in SUPPLIER_SITES:
+            if d == s or d.endswith("." + s) or s.endswith(d):
+                found_domains.add(s)
+    gap = [s for s in SUPPLIER_SITES if s not in found_domains]
+    if not gap:
+        log.info("SKU %s — supplier gap-sweep skipped: all %d trusted suppliers "
+                 "already covered by organic results", item.schein_sku, len(SUPPLIER_SITES))
+        return 0
+    if _fc_state["exhausted"]:
+        return 0
+    base = (item.mpn_query or item.search_query or item.description or "").strip()
+    variant = (item.variant or "").strip()
+    if variant and variant.lower() not in base.lower():
+        base = f"{base} {variant}"
+    if not base:
+        return 0
+    log.info("SKU %s — supplier gap-sweep: %d/%d suppliers missing from organic, "
+             "1 Firecrawl /search (limit=20) to fill gap", item.schein_sku,
+             len(gap), len(SUPPLIER_SITES))
+    return _firecrawl_search(base, cands, seen, include_domains=gap, limit=20,
+                             stage="supplier-gap")
+
+
 def market_sweep(item: OrderLineItem, max_candidates: int = 14) -> tuple[List[PriceCandidate], List[str]]:
     """Broad public sweep. Runs on EVERY item EVERY run (PRD 4.2)."""
     queries = _item_queries(item)
@@ -687,9 +725,10 @@ def market_sweep(item: OrderLineItem, max_candidates: int = 14) -> tuple[List[Pr
         except Exception as e:
             log.error("SKU %s — q%d organic/ads FAILED: %s", item.schein_sku, qi, e)
 
-    # Direct trusted-supplier searches via SerpAPI (only while SerpAPI lives).
-    if serp_ok and not _serp_state["exhausted"]:
-        _supplier_site_sweep(item, cands, seen)
+    # Trusted-supplier coverage: gap-based Firecrawl sweep. Only searches for
+    # suppliers NOT already surfaced by organic discovery (1 Firecrawl call vs
+    # 8+ SerpAPI site: calls). Runs regardless of SerpAPI state.
+    _firecrawl_supplier_gap_sweep(item, cands, seen)
 
     # ---- STAGE 2: Firecrawl /search open-web fallback -------------------
     # Fires when SerpAPI is unavailable/exhausted. Discovery-only (2 credits per
@@ -845,8 +884,11 @@ def firecrawl_verify(c: PriceCandidate, sku: str = "") -> PriceCandidate:
                 f"page price ${verified_price} differs sharply from search "
                 f"listing ${c.price} — possible wrong-variant price, verify")
         c.price = verified_price
-    if extracted.get("pack_quantity"):
-        c.pack_qty = int(extracted["pack_quantity"])
+    if extracted.get("pack_quantity") is not None:
+        try:
+            c.pack_qty = int(float(extracted["pack_quantity"]))
+        except (TypeError, ValueError):
+            pass
     if extracted.get("in_stock") is not None:
         c.in_stock = bool(extracted["in_stock"])
     if extracted.get("minimum_order_condition"):

@@ -80,6 +80,13 @@ def _clean(val) -> str:
     return "" if s.lower() in ("none", "null", "n/a", "na", "-") else s
 
 
+def _savings_pct(per_unit: float, unit_price: float):
+    """Savings % vs Schein unit price; None when unit price is zero."""
+    if not unit_price:
+        return None
+    return per_unit / unit_price * 100
+
+
 def match_score(criteria: Optional[dict], confidence) -> int:
     """0–100: 60% weight on four-criteria coverage, 40% on AI confidence."""
     crit = criteria or {}
@@ -413,7 +420,7 @@ def write_price_match_report(order: ParsedOrder, results: List[ItemResult],
         for n, c in enumerate(opts, start=1):
             per_unit = round(r.item.unit_price - c.price, 2)
             total = round(per_unit * r.item.qty, 2)
-            pct = per_unit / r.item.unit_price * 100
+            pct = _savings_pct(per_unit, r.item.unit_price)
             if getattr(c, "is_generic_equivalent", False):
                 reason = ("GENERIC EQUIVALENT — same product type, different/no brand; "
                           "no competitor sells the exact Schein house-brand item. "
@@ -567,7 +574,7 @@ def write_alternate_purchase_list(order: ParsedOrder,
                 savings, pct = "—", None
             else:
                 per_unit = round(r.item.unit_price - c.price, 2)
-                pct = per_unit / r.item.unit_price * 100
+                pct = _savings_pct(per_unit, r.item.unit_price)
                 savings = (per_unit if per_unit > 0 else
                            f"Equiv ${c.price:,.2f} > Schein ${r.item.unit_price:,.2f}")
             basis = _basis_text(c)
