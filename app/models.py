@@ -21,6 +21,7 @@ class OrderLineItem(BaseModel):
     mpn: Optional[str] = None                # manufacturer part number
     search_query: Optional[str] = None
     generic_query: Optional[str] = None   # brand-stripped query for house-brand items
+    mpn_query: Optional[str] = None       # MPN-based precision query
 
 
 class ParsedOrder(BaseModel):
@@ -45,6 +46,8 @@ class PriceCandidate(BaseModel):
     pack_condition: Optional[str] = None     # e.g. "6-pack price", "case of 4 required"
     scraped_product_name: Optional[str] = None
     scraped_variant: Optional[str] = None
+    variant_unverified: bool = False     # page didn't confirm the ordered variant
+    is_generic_equivalent: bool = False  # same product type, different (or no) brand
     in_stock: Optional[bool] = None
     # Verdict — assigned by real validation, never defaulted
     match_type: str = "unverified"           # exact | approximate | rejected | unverified

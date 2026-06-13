@@ -31,7 +31,11 @@ from .models import OrderLineItem, PriceCandidate
 
 log = logging.getLogger(__name__)
 
-MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+_DEFAULT_MODELS = "llama-3.3-70b-versatile,llama-3.1-8b-instant,gemma2-9b-it"
+MODELS = [m.strip() for m in os.environ.get(
+    "GROQ_MODELS", os.environ.get("GROQ_MODEL", _DEFAULT_MODELS)).split(",") if m.strip()]
+MODEL = MODELS[0]
+_model_idx = {"i": 0}
 MIN_INTERVAL = float(os.environ.get("GROQ_MIN_INTERVAL", "2.1"))  # ~28 req/min
 MAX_RETRIES = 5
 
@@ -43,7 +47,10 @@ _last_call = 0.0
 def client() -> Groq:
     global _client
     if _client is None:
-        _client = Groq()  # uses GROQ_API_KEY env var
+        # max_retries=0 — disable the SDK's OWN retry layer so our paced
+        # backoff (_pace + _ask_json) is the single source of retry truth.
+        # Stacking both layers double-hammers the endpoint and wastes RPM.
+        _client = Groq(max_retries=0)  # uses GROQ_API_KEY env var
     return _client
 
 
@@ -58,41 +65,70 @@ def _pace():
 
 
 def _ask_json(prompt: str, max_tokens: int = 4000) -> dict:
+    """Ask Groq for JSON with retry + automatic model failover. Each model in
+    MODELS has its OWN free-tier rate limit; if the current model stays
+    rate-limited past a couple of attempts and another model remains, we fail
+    over to it (and remember that for the rest of the run). Only when every
+    model is exhausted does the call raise."""
     last_err = None
-    for attempt in range(MAX_RETRIES):
-        _pace()
-        try:
-            resp = client().chat.completions.create(
-                model=MODEL,
-                max_tokens=max_tokens,
-                temperature=0,
-                response_format={"type": "json_object"},
-                messages=[
-                    {"role": "system",
-                     "content": "You are a precise dental supply data engine. "
-                                "Respond ONLY with valid JSON. No prose, no markdown."},
-                    {"role": "user", "content": prompt},
-                ],
-            )
-            text = resp.choices[0].message.content or ""
-            text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
+    messages = [
+        {"role": "system",
+         "content": "You are a precise dental supply data engine. "
+                    "Respond ONLY with valid JSON. No prose, no markdown."},
+        {"role": "user", "content": prompt},
+    ]
+    for mi in range(_model_idx["i"], len(MODELS)):
+        model = MODELS[mi]
+        rate_limited = False
+        for attempt in range(MAX_RETRIES):
+            _pace()
             try:
-                return json.loads(text)
-            except json.JSONDecodeError:
-                m = re.search(r"\{.*\}", text, re.S)   # salvage outermost object
-                if m:
-                    return json.loads(m.group(0))
-                raise
-        except (RateLimitError, APIStatusError) as e:
-            last_err = e
-            backoff = min(2 ** attempt * 2, 30)
-            log.warning("Groq %s — retrying in %ss (attempt %d/%d)",
-                        type(e).__name__, backoff, attempt + 1, MAX_RETRIES)
-            time.sleep(backoff)
-        except json.JSONDecodeError as e:
-            last_err = e
-            log.warning("Groq returned unparseable JSON — retrying (attempt %d)", attempt + 1)
-    raise RuntimeError(f"Groq call failed after {MAX_RETRIES} attempts: {last_err}")
+                resp = client().chat.completions.create(
+                    model=model, max_tokens=max_tokens, temperature=0,
+                    response_format={"type": "json_object"}, messages=messages,
+                )
+                text = resp.choices[0].message.content or ""
+                text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
+                try:
+                    return json.loads(text)
+                except json.JSONDecodeError:
+                    m = re.search(r"\{.*\}", text, re.S)
+                    if m:
+                        return json.loads(m.group(0))
+                    raise
+            except RateLimitError as e:
+                last_err = e
+                rate_limited = True
+                more_models = mi < len(MODELS) - 1
+                if more_models and attempt >= 1:
+                    log.warning("Groq %s rate-limited — failing over to %s",
+                                model, MODELS[mi + 1])
+                    break
+                ra = None
+                try:
+                    ra = float(getattr(e, "response", None).headers.get("retry-after"))
+                except Exception:
+                    ra = None
+                backoff = ra if ra else min(8 * (attempt + 1), 60)
+                log.warning("Groq %s rate-limited (429) — waiting %ss (attempt %d/%d)",
+                            model, round(backoff), attempt + 1, MAX_RETRIES)
+                time.sleep(backoff)
+            except APIStatusError as e:
+                last_err = e
+                backoff = min(2 ** attempt * 2, 30)
+                log.warning("Groq %s %s — retrying in %ss (attempt %d/%d)",
+                            model, type(e).__name__, backoff, attempt + 1, MAX_RETRIES)
+                time.sleep(backoff)
+            except json.JSONDecodeError as e:
+                last_err = e
+                log.warning("Groq %s unparseable JSON — retrying (attempt %d)",
+                            model, attempt + 1)
+        if rate_limited and mi < len(MODELS) - 1:
+            _model_idx["i"] = mi + 1
+            log.info("Groq failover: primary model is now %s for the rest of this run",
+                     MODELS[mi + 1])
+            continue
+    raise RuntimeError(f"All Groq models exhausted ({', '.join(MODELS)}): {last_err}")
 
 
 def _results(data) -> list:
@@ -137,6 +173,19 @@ line, same order, each with keys:
                                 # Maxima, Criterion, Benzo-Jel, Foamies, Neotray):
                                 # no other supplier sells these under the Schein
                                 # name, so the generic query finds the equivalents.
+                                # The generic query MUST keep the dental/clinical
+                                # product category so results stay on-domain (e.g.
+                                # "dental impression mixing tips 4.2mm yellow 48",
+                                # never just "mixing tips" which returns paint/craft
+                                # supplies). Expand cryptic descriptions into the
+                                # full product type using your domain knowledge
+                                # (e.g. "SILHOUETTE MEDIUM, 12 PK" is a Porter
+                                # Silhouette low-profile nasal mask).
+- mpn_query (string|null)       # THIRD query using the manufacturer part number
+                                # when known (e.g. "Clinpro 7210FF flavorless",
+                                # "DMG 110351 mixing tips"). MPNs are the single
+                                # most precise way to find the exact variant/pack
+                                # across suppliers. Null if no reliable MPN.
 
 Order lines:
 {lines}
@@ -146,24 +195,14 @@ Order lines:
 def parse_items_batch(items: List[OrderLineItem], chunk_size: int = 12) -> List[OrderLineItem]:
     """Batched parsing. Chunked to stay inside free-tier output-token limits."""
     by_sku = {}
-    failed_chunks = 0
-    total_chunks = (len(items) + chunk_size - 1) // chunk_size
-    for chunk_idx, start in enumerate(range(0, len(items), chunk_size), start=1):
+    for start in range(0, len(items), chunk_size):
         chunk = items[start:start + chunk_size]
         lines = "\n".join(
             f'{i.schein_sku} | "{i.description}" | UOM {i.uom}' for i in chunk
         )
-        try:
-            data = _ask_json(PARSE_PROMPT.format(lines=lines), max_tokens=4000)
-            for d in _results(data):
-                by_sku[str(d.get("sku"))] = d
-        except Exception:
-            failed_chunks += 1
-            skus = ", ".join(i.schein_sku for i in chunk)
-            log.exception("Groq parse chunk %d/%d FAILED — SKUs %s",
-                          chunk_idx, total_chunks, skus)
-    if failed_chunks == total_chunks and items:
-        raise RuntimeError("Groq parsing failed for all chunks — check GROQ_API_KEY and rate limits")
+        data = _ask_json(PARSE_PROMPT.format(lines=lines), max_tokens=4000)
+        for d in _results(data):
+            by_sku[str(d.get("sku"))] = d
     for it in items:
         d = by_sku.get(it.schein_sku, {})
         it.brand = d.get("brand")
@@ -178,6 +217,7 @@ def parse_items_batch(items: List[OrderLineItem], chunk_size: int = 12) -> List[
                 pass
         it.search_query = d.get("search_query") or it.description
         it.generic_query = d.get("generic_query") or None
+        it.mpn_query = d.get("mpn_query") or None
     return items
 
 
@@ -229,23 +269,19 @@ Candidates:
 def validate_candidates(item: OrderLineItem, cands: List[PriceCandidate]) -> List[PriceCandidate]:
     if not cands:
         return cands
-    try:
-        blob = "\n".join(
-            json.dumps({
-                "idx": i, "title": c.title, "url": c.url, "site": c.source_site,
-                "price": c.price, "scraped_product_name": c.scraped_product_name,
-                "scraped_variant": c.scraped_variant, "pack_qty": c.pack_qty,
-            }) for i, c in enumerate(cands)
-        )
-        data = _ask_json(VALIDATE_PROMPT.format(
-            brand=item.brand, product_name=item.product_name,
-            size_form=item.size_form, variant=item.variant,
-            pack_qty=item.pack_qty, description=item.description,
-            candidates=blob,
-        ), max_tokens=3000)
-    except Exception:
-        log.exception("Groq validate FAILED for SKU %s", item.schein_sku)
-        return cands
+    blob = "\n".join(
+        json.dumps({
+            "idx": i, "title": c.title, "url": c.url, "site": c.source_site,
+            "price": c.price, "scraped_product_name": c.scraped_product_name,
+            "scraped_variant": c.scraped_variant, "pack_qty": c.pack_qty,
+        }) for i, c in enumerate(cands)
+    )
+    data = _ask_json(VALIDATE_PROMPT.format(
+        brand=item.brand, product_name=item.product_name,
+        size_form=item.size_form, variant=item.variant,
+        pack_qty=item.pack_qty, description=item.description,
+        candidates=blob,
+    ), max_tokens=3000)
     for d in _results(data):
         try:
             c = cands[int(d["idx"])]
@@ -283,14 +319,7 @@ Return ONLY a JSON object:
 
 def evaluate_equivalency(item: OrderLineItem, equivalent_name: str,
                          note: str, market_summary: str) -> dict:
-    try:
-        return _ask_json(EQUIV_PROMPT.format(
-            description=item.description, brand=item.brand, pack_qty=item.pack_qty,
-            equivalent=equivalent_name, note=note or "", market=market_summary or "none",
-        ), max_tokens=400)
-    except Exception:
-        log.exception("Groq equivalency FAILED for SKU %s", item.schein_sku)
-        return {
-            "confidence_level": "possible_alternative",
-            "basis": "Groq evaluation failed — manual review required",
-        }
+    return _ask_json(EQUIV_PROMPT.format(
+        description=item.description, brand=item.brand, pack_qty=item.pack_qty,
+        equivalent=equivalent_name, note=note or "", market=market_summary or "none",
+    ), max_tokens=400)

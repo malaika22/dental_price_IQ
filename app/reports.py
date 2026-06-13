@@ -154,33 +154,12 @@ def _money(ws, ridx: int, cols: List[int]):
             cell.number_format = MONEY
 
 
-def _savings_pct(per_unit: float, unit_price: float) -> Optional[float]:
-    if not unit_price:
-        return None
-    return per_unit / unit_price * 100
-
-
-def _price_match_options(r: ItemResult, options_per_item: int = 3) -> List[PriceCandidate]:
-    """Same option selection as write_price_match_report — used for stream separation."""
+def _has_primary_row(r: ItemResult) -> bool:
+    """An item is in price_match (excluded from alternate) iff it has at least
+    one candidate passing the strict pack+variant+size gate."""
     if r.routed_to_alternate:
-        return []
-    opts: List[PriceCandidate] = []
-    exacts = [c for c in r.candidates
-              if c.price is not None and _is_exact_cand(r.item, c)
-              and not _pack_mismatch(r.item, c) and not _is_gated(c)]
-    if exacts:
-        opts.append(min(exacts, key=lambda c: c.price))
-    for c in _option_pool(r):
-        if len(opts) >= options_per_item:
-            break
-        if opts and c is opts[0]:
-            continue
-        opts.append(c)
-    return opts
-
-
-def _appears_in_price_match(r: ItemResult) -> bool:
-    return bool(_price_match_options(r))
+        return False
+    return any(_pricematch_eligible(r.item, c) for c in r.candidates)
 
 
 def _reviewable(c: PriceCandidate) -> bool:
@@ -261,28 +240,27 @@ def _option_pool(r: ItemResult) -> list[PriceCandidate]:
     labeled, only to fill otherwise-empty slots. Sanity rejects never appear.
     Within the leading rank, near-tied scores (15 pts) compete on price."""
     pool, seen = [], set()
+    unit = r.item.unit_price
     for c in r.candidates:
         if c.price is None or c.price <= 0 or c.url in seen:
             continue
         if "sanity" in (c.rejected_reason or "").lower():
+            continue
+        if "page not found" in (c.rejected_reason or "").lower():
+            continue                      # dead/expired listing
+        # price floor/ceiling applies to EVERY option, including gated and
+        # unverified snippet prices (kills $0.30-per-unit style rows)
+        if not (0.05 * unit <= c.price <= 3.0 * unit):
             continue
         if _pack_mismatch(r.item, c):
             continue                      # stays in alternate + evidence only
         seen.add(c.url)
         pool.append(c)
 
-    def key(c):
-        rank = 5 if _is_gated(c) else _OPT_RANK.get(c.match_type, 3)
-        return (rank, -match_score(c.criteria, c.confidence), c.price)
-
-    pool.sort(key=key)
-    if len(pool) > 1:
-        lead = 5 if _is_gated(pool[0]) else _OPT_RANK.get(pool[0].match_type, 3)
-        block = [c for c in pool if (5 if _is_gated(c) else _OPT_RANK.get(c.match_type, 3)) == lead]
-        rest = [c for c in pool if c not in block]
-        smax = max(match_score(c.criteria, c.confidence) for c in block)
-        block.sort(key=lambda c: (match_score(c.criteria, c.confidence) < smax - 15, c.price))
-        pool = block + rest
+    # Lowest price first. Gated (login/membership) candidates always sort
+    # after publicly-priced ones regardless of price.
+    pool.sort(key=lambda c: (_is_gated(c), c.price,
+                             -match_score(c.criteria, c.confidence)))
     return pool
 
 
@@ -302,22 +280,69 @@ def _why_not_exact(c: PriceCandidate) -> str:
 
 def _score_label(item, c: PriceCandidate) -> str:
     """Label derives from the criteria themselves, never from a raw
-    match_type that contradicts them."""
+    match_type that contradicts them. Surfaces special tiers:
+    GATED (login pricing), GENERIC EQUIVALENT (Q1: house-brand item, no exact
+    competitor exists), VARIANT UNVERIFIED (Q2: variant not confirmed on page)."""
+    score = match_score(c.criteria, c.confidence)
     if _is_gated(c):
-        return f"GATED ({match_score(c.criteria, c.confidence)}%)"
+        return f"GATED ({score}%)"
+    if getattr(c, "is_generic_equivalent", False):
+        return f"GENERIC EQUIVALENT ({score}%)"
     if _is_exact_cand(item, c):
-        label = "EXACT"
-    elif c.match_type in ("exact", "approximate"):
-        label = "APPROXIMATE"
-    else:
-        label = "POSSIBLE"
-    return f"{label} ({match_score(c.criteria, c.confidence)}%)"
+        if getattr(c, "variant_unverified", False):
+            return f"EXACT · VARIANT UNVERIFIED ({score}%)"
+        return f"EXACT ({score}%)"
+    if c.match_type in ("exact", "approximate"):
+        return f"APPROXIMATE ({score}%)"
+    return f"POSSIBLE ({score}%)"
 
 
 def _is_exact_cand(item, c: PriceCandidate) -> bool:
     crit = c.criteria or {}
     return (crit.get("name_match") and crit.get("size_form_match")
             and crit.get("pack_match") and _brand_ok(item, c))
+
+
+def _mismatch_reason(item, c: PriceCandidate) -> str:
+    """Human-readable reason a candidate is in alternate, not price_match."""
+    reasons = []
+    crit = c.criteria or {}
+    if crit.get("pack_match") is False or (
+            c.pack_qty and item.pack_qty and int(c.pack_qty) != int(item.pack_qty)):
+        pq = c.pack_qty if c.pack_qty else "?"
+        reasons.append(f"PACK MISMATCH (page {pq} vs ordered {item.pack_qty or '?'})")
+    if crit.get("size_form_match") is False:
+        reasons.append("SIZE/VOLUME MISMATCH (e.g. 2L vs 5L) — verify on page")
+    if getattr(c, "variant_unverified", False) or crit.get("name_match") is False:
+        reasons.append(f"VARIANT MISMATCH (ordered: {item.variant or 'specified'})")
+    if _is_gated(c):
+        reasons.append("LOGIN-GATED price")
+    if "page not found" in (c.rejected_reason or "").lower():
+        reasons.append("DEAD/EXPIRED listing")
+    return " · ".join(reasons)
+
+
+def _pricematch_eligible(item, c: PriceCandidate) -> bool:
+    """STRICT price_match gate (client rule): pack quantity AND size/form AND
+    variant must all match. Brand MAY differ (generic equivalent allowed, but
+    labeled). Anything failing this goes to the alternate sheet instead."""
+    crit = c.criteria or {}
+    if c.price is None or c.scraped_product_name is None:
+        return False
+    if not (0.05 * item.unit_price <= c.price <= 3.0 * item.unit_price):
+        return False
+    if _is_gated(c) or _pack_mismatch(item, c):
+        return False
+    if "page not found" in (c.rejected_reason or "").lower():
+        return False
+    # variant must be confirmed (Q2: unverified variants are NOT price_match grade
+    # under the strict rule — they drop to alternate)
+    if getattr(c, "variant_unverified", False):
+        return False
+    # the three hard requirements: name/size + pack (+ size_form) all true
+    if not (crit.get("name_match") and crit.get("size_form_match") and crit.get("pack_match")):
+        return False
+    return True
 
 
 def write_price_match_report(order: ParsedOrder, results: List[ItemResult],
@@ -341,7 +366,41 @@ def write_price_match_report(order: ParsedOrder, results: List[ItemResult],
 
     groups = []
     for r in results:
-        opts = _price_match_options(r, options_per_item)
+        # Build the candidate pool: every priced, page-verified candidate that
+        # is not gated/dead. (Pack/variant/size mismatches ARE allowed here now —
+        # they appear as Options 2-3 with a reason, and ALSO in the alternate
+        # sheet. Nothing is excluded from either stream.)
+        def _poolable(c):
+            unit = r.item.unit_price
+            return (c.price is not None
+                    and 0.05 * unit <= c.price <= 3.0 * unit
+                    and c.scraped_product_name is not None
+                    and not _is_gated(c)
+                    and "page not found" not in (c.rejected_reason or "").lower())
+
+        pool, seen_u = [], set()
+        for c in sorted(r.candidates, key=lambda c: c.price if c.price is not None else 1e9):
+            if not _poolable(c) or c.url in seen_u:
+                continue
+            seen_u.add(c.url)
+            pool.append(c)
+        if not pool:
+            continue
+
+        # Option 1: cheapest EXACT (pack+variant+size match; brand may differ).
+        exacts = [c for c in pool if _pricematch_eligible(r.item, c)]
+        opts = []
+        if exacts:
+            opt1 = min(exacts, key=lambda c: c.price)   # already cheapest-first
+            opts.append(opt1)
+        # Options 2-3 (and Option 1 if no exact): next cheapest overall, any
+        # match type, excluding whatever is already chosen.
+        for c in pool:
+            if len(opts) >= options_per_item:
+                break
+            if any(c is o for o in opts):
+                continue
+            opts.append(c)
         if not opts:
             continue
         best_total = max(round((r.item.unit_price - c.price) * r.item.qty, 2)
@@ -354,13 +413,35 @@ def write_price_match_report(order: ParsedOrder, results: List[ItemResult],
         for n, c in enumerate(opts, start=1):
             per_unit = round(r.item.unit_price - c.price, 2)
             total = round(per_unit * r.item.qty, 2)
-            pct = _savings_pct(per_unit, r.item.unit_price)
-            if _is_exact_cand(r.item, c):
-                reason = ("Exact — all four trust criteria confirmed"
-                          if n == 1 else
-                          "Exact — all four trust criteria confirmed (alternate source, higher price than Option 1)")
+            pct = per_unit / r.item.unit_price * 100
+            if getattr(c, "is_generic_equivalent", False):
+                reason = ("GENERIC EQUIVALENT — same product type, different/no brand; "
+                          "no competitor sells the exact Schein house-brand item. "
+                          "Verify clinical equivalence before substituting.")
+            elif _is_exact_cand(r.item, c):
+                base = "Exact — all four trust criteria confirmed"
+                if getattr(c, "variant_unverified", False):
+                    base += (" · VARIANT UNVERIFIED — page did not confirm the ordered "
+                             f"variant ({r.item.variant or 'specified variant'}); verify before buying")
+                if n > 1:
+                    base += " (alternate source, higher price than Option 1)"
+                reason = base
             else:
-                reason = _why_not_exact(c)
+                crit = c.criteria or {}
+                matched = [_CRIT_LABEL[k] for k, v in crit.items() if v]
+                not_matched = [_CRIT_LABEL[k] for k, v in crit.items() if v is False]
+                mm = _mismatch_reason(r.item, c)
+                parts = []
+                if mm:
+                    parts.append(mm)
+                if matched:
+                    parts.append("Matching: " + ", ".join(matched))
+                if not_matched:
+                    parts.append("Not matching: " + ", ".join(not_matched))
+                note = _clean(c.notes) or _clean(c.rejected_reason)
+                if note:
+                    parts.append(note)
+                reason = " · ".join(parts) or "Not exact — could not confirm all four criteria"
 
             if n == 1:
                 ws.append([r.item.schein_sku, _dash(r.item.mpn), r.item.description,
@@ -442,7 +523,7 @@ def write_alternate_purchase_list(order: ParsedOrder,
         sentence = _TIER["exact"][1] if label == "EXACT" else _TIER["approximate"][1]
         basis = sentence + "\nEquivalency table (client-maintained) · " + (f.basis or "")
         per_unit = round(f.item.unit_price - f.price, 2) if f.price else None
-        pct = _savings_pct(per_unit, f.item.unit_price) if per_unit is not None else None
+        pct = per_unit / f.item.unit_price * 100 if per_unit is not None else None
         savings = (per_unit if per_unit and per_unit > 0
                    else (f"Equiv ${f.price:,.2f} > Schein ${f.item.unit_price:,.2f}"
                          if f.price else "—"))
@@ -451,34 +532,52 @@ def write_alternate_purchase_list(order: ParsedOrder,
                          f.url or search_fallback_url(f.item), f"{label} (table)",
                          basis, savings, pct)))
 
-    # B — all reviewable scraped candidates for items not in Price Match
+    # B — EVERY reviewable candidate that is NOT price_match-eligible, for ALL
+    #     items. The alternate sheet now covers every product: pack/variant/size
+    #     mismatches (even from items that DO have a price_match row), plus all
+    #     candidates from items with no price_match row at all. Nothing dropped.
     for r in (results or []):
-        if _appears_in_price_match(r) or r.item.schein_sku in equivalency_skus:
+        if r.item.schein_sku in equivalency_skus:
             continue
         pool, seen = [], set()
         for c in r.candidates:
-            if _reviewable(c) and c.url not in seen:
-                seen.add(c.url)
-                pool.append(c)
+            if c.url in seen:
+                continue
+            # include EVERYTHING reviewable — price_match options appear here
+            # too (user wants the alternate sheet to hold every option/price)
+            if not _reviewable(c) and c.price is None:
+                continue
+            seen.add(c.url)
+            pool.append(c)
         if not pool:
-            url = search_fallback_url(r.item)
-            entries.append((9, order_idx.get(r.item.schein_sku, 999), 0,
-                            (r.item, "— no public candidate found this run —", "—",
-                             None, url, "POSSIBLE (0%)",
-                             "POSSIBLE — no usable public listing found; link opens a supplier search",
-                             "—", None)))
+            # item fully covered by price_match (all candidates eligible) OR
+            # genuinely nothing found — only show a placeholder when nothing found
+            if not _has_primary_row(r):
+                url = search_fallback_url(r.item)
+                entries.append((9, order_idx.get(r.item.schein_sku, 999), 0,
+                                (r.item, "— no public candidate found this run —", "—",
+                                 None, url, "POSSIBLE (0%)",
+                                 "POSSIBLE — no usable public listing found; link opens a supplier search",
+                                 "—", None)))
             continue
         for c in pool:
+            mismatch = _mismatch_reason(r.item, c)
             label, _, rank = _TIER.get(c.match_type, _TIER["unverified"])
-            per_unit = round(r.item.unit_price - c.price, 2)
-            pct = _savings_pct(per_unit, r.item.unit_price)
-            savings = (per_unit if per_unit > 0 else
-                       f"Equiv ${c.price:,.2f} > Schein ${r.item.unit_price:,.2f}")
-            entries.append((rank, order_idx.get(r.item.schein_sku, 999), c.price,
+            if c.price is None:
+                savings, pct = "—", None
+            else:
+                per_unit = round(r.item.unit_price - c.price, 2)
+                pct = per_unit / r.item.unit_price * 100
+                savings = (per_unit if per_unit > 0 else
+                           f"Equiv ${c.price:,.2f} > Schein ${r.item.unit_price:,.2f}")
+            basis = _basis_text(c)
+            if mismatch:
+                basis = f"{mismatch}\n{basis}"
+            entries.append((rank, order_idx.get(r.item.schein_sku, 999), c.price or 1e9,
                             (r.item, c.scraped_product_name or c.title,
                              c.source_site, c.price, c.url or search_fallback_url(r.item),
                              f"{label} ({match_score(c.criteria, c.confidence)}%)",
-                             _basis_text(c), savings, pct)))
+                             basis, savings, pct)))
 
     entries.sort(key=lambda e: (e[0], e[1], e[2]))
     for band, (_, _, _, args) in enumerate(entries):

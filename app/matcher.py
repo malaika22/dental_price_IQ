@@ -52,7 +52,7 @@ def pack_compatible(item: OrderLineItem, c: PriceCandidate) -> Optional[bool]:
 def volume_compatible(item: OrderLineItem, c: PriceCandidate) -> Optional[bool]:
     a = normalize_volume_ml(item.description)
     b = normalize_volume_ml((c.scraped_product_name or "") + " " + (c.title or ""))
-    if a is None or b is None:
+    if a is None or b is None or a <= 0:
         return None
     return abs(a - b) / a <= 0.02
 
@@ -64,6 +64,23 @@ def _brand_ok(item: OrderLineItem, c: PriceCandidate) -> bool:
     return bool((c.criteria or {}).get("brand_match")) or not item.brand
 
 
+def _likely_exact(item: OrderLineItem, c: PriceCandidate) -> bool:
+    """Pre-validation heuristic for the early-stop counter (Groq criteria are
+    not assigned until after the scraping loop): page verified, pack
+    compatible, and strong token overlap between the item and the page."""
+    if c.scraped_product_name is None:
+        return False
+    if pack_compatible(item, c) is False or volume_compatible(item, c) is False:
+        return False
+    ref = f"{item.brand or ''} {item.product_name or item.description}".lower()
+    page = f"{c.scraped_product_name} {c.title}".lower()
+    tokens = [w for w in re.findall(r"[a-z0-9.]+", ref) if len(w) > 2]
+    if not tokens:
+        return False
+    hits = sum(1 for w in tokens if w in page)
+    return hits / len(tokens) >= 0.6
+
+
 def _effective_exact(item: OrderLineItem, c: PriceCandidate) -> bool:
     crit = c.criteria or {}
     return (crit.get("name_match") and crit.get("size_form_match")
@@ -72,17 +89,30 @@ def _effective_exact(item: OrderLineItem, c: PriceCandidate) -> bool:
 # --------------------------------------------------------------- pipeline ---
 
 def process_item(item: OrderLineItem, max_verify: int = 8) -> ItemResult:
+    sku = item.schein_sku
     result = ItemResult(item=item)
     cands, flagged = search.market_sweep(item)
     result.flagged_sites = flagged
 
     # verify the most promising candidates on-page (JS rendered)
     verified: List[PriceCandidate] = []
+    exacts_found = 0
+    verified_ok = 0
     for c in cands:
+        # early stop: once 2 verified exacts + 4 verified candidates exist,
+        # skip remaining PRICED candidates — the shortlist is cheapest-first,
+        # so they are provably more expensive than what's already verified.
+        # Price-UNKNOWN candidates (reserve slots) are always scraped: one of
+        # them could be the true lowest price, invisible until the page is read.
+        if exacts_found >= 2 and verified_ok >= 4 and c.price is not None:
+            c.notes = c.notes or "not scraped — enough verified candidates found"
+            result.candidates.append(c)
+            continue
         if len([v for v in verified if v.match_type != "rejected"]) >= max_verify:
             result.candidates.append(c)       # unverified leftovers -> evidence
             continue
-        c = search.firecrawl_verify(c, sku=item.schein_sku)
+        c._ordered_variant = item.variant or ""
+        c = search.firecrawl_verify(c)
         # deterministic demotions before AI sees them
         if c.match_type != "rejected":
             if not price_sane(item, c):
@@ -94,6 +124,10 @@ def process_item(item: OrderLineItem, max_verify: int = 8) -> ItemResult:
             elif volume_compatible(item, c) is False:
                 c.match_type = "rejected"
                 c.rejected_reason = "volume/size mismatch after normalization"
+        if c.scraped_product_name is not None:
+            verified_ok += 1
+            if _likely_exact(item, c):
+                exacts_found += 1
         verified.append(c)
 
     to_validate = [c for c in verified if c.match_type != "rejected"]
@@ -103,7 +137,23 @@ def process_item(item: OrderLineItem, max_verify: int = 8) -> ItemResult:
         if c.match_type == "exact" and c.criteria and not _effective_exact(item, c):
             c.match_type = "approximate"
             log.info("SKU %s — demoted %s to approximate (criteria contradict exact)",
-                     item.schein_sku, c.source_site)
+                     sku, c.source_site)
+        # a candidate whose page was never successfully read cannot be EXACT —
+        # the title alone is not page-level evidence (dead/expired listings)
+        if c.match_type == "exact" and c.scraped_product_name is None:
+            c.match_type = "approximate"
+            c.notes = ((c.notes + " · ") if c.notes else "") + \
+                "not page-verified — match based on listing title only, verify"
+            log.info("SKU %s — demoted %s to approximate (page never verified)",
+                     sku, c.source_site)
+    # tag generic equivalents (brand differs but product/size/pack match) and
+    # carry the variant-unverified flag forward (Q1 + Q2 decisions)
+    for c in verified:
+        crit = c.criteria or {}
+        if (item.brand and crit.get("name_match") and crit.get("size_form_match")
+                and crit.get("pack_match") and not crit.get("brand_match")):
+            c.is_generic_equivalent = True
+
     result.candidates.extend(verified)
 
     # Best exact: all four criteria true. Pack-mismatched candidates can NEVER
@@ -163,7 +213,7 @@ def run_equivalency(result: ItemResult, entries: List[EquivalencyEntry]) -> Opti
     cands, _ = search.market_sweep(probe, max_candidates=4)
     best = None
     for c in cands[:3]:
-        c = search.firecrawl_verify(c, sku=item.schein_sku)
+        c = search.firecrawl_verify(c)
         if c.price and (best is None or c.price < best.price):
             best = c
 

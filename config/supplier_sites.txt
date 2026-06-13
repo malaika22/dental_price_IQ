@@ -1,0 +1,30 @@
+# Trusted dental supplier domains. For EVERY item, the system runs a targeted
+# site:<domain> search so these suppliers are checked directly even when they
+# don't appear in generic SerpAPI results. Client-editable — add/remove freely,
+# one domain per line, no code changes required. Lines starting with # ignored.
+net32.com
+curio.dental
+surgimac.com
+frontierdental.com
+myddssupply.com
+pearsondental.com
+optimusdentalsupply.com
+ddsdentalsupplies.com
+crazydentalprices.com
+supplyclinic.com
+dentalcity.com
+safcodental.com
+tdsc.com
+scottsdental.com
+practicon.com
+benco.com
+usdentaldepot.com
+amerdental.com
+dentalwholesaledirect.com
+primedentalsupply.com
+skydentalsupply.com
+pstshop.com
+darbydental.com
+shop.benco.com
+pattersondental.com
+orthazone.com
