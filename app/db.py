@@ -66,10 +66,27 @@ def connect(db_path: str | Path = "dental_intel.sqlite3") -> sqlite3.Connection:
     return conn
 
 
+def _delete_order(cur, order_id: int) -> None:
+    """Remove a prior run and its children (re-upload of the same reference)."""
+    cur.execute(
+        "DELETE FROM price_findings WHERE order_item_id IN "
+        "(SELECT id FROM order_items WHERE order_id=?)", (order_id,))
+    cur.execute(
+        "DELETE FROM equivalency_findings WHERE order_item_id IN "
+        "(SELECT id FROM order_items WHERE order_id=?)", (order_id,))
+    cur.execute("DELETE FROM order_items WHERE order_id=?", (order_id,))
+    cur.execute("DELETE FROM orders WHERE id=?", (order_id,))
+
+
 def persist_run(conn, order, results, findings) -> int:
     cur = conn.cursor()
+    if order.reference:
+        cur.execute("SELECT id FROM orders WHERE reference=?", (order.reference,))
+        row = cur.fetchone()
+        if row:
+            _delete_order(cur, row[0])
     cur.execute(
-        "INSERT OR REPLACE INTO orders(reference, order_date, source_file, total_price)"
+        "INSERT INTO orders(reference, order_date, source_file, total_price)"
         " VALUES (?,?,?,?)",
         (order.reference, order.order_date, order.source_file, order.total_price))
     order_id = cur.lastrowid

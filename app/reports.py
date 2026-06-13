@@ -1,52 +1,79 @@
 """Report generation — the three output files (PRD 4.7, 4.8, 5.4).
 
-Product URLs are included in ALL three files and rendered as clickable
-hyperlinks; when no verified product page exists, the link falls back to a
-supplier search page (Google Shopping) for that item.
+Layout (matches the approved reference styling):
+- Row 1: merged title banner — report name · Ref · Date · Patient · Generated
+- Row 2: merged legend line (italic gray)
+- Row 3: navy header row, white bold, wrapped
+- Data rows: banded light green, thin borders, wrapped text, savings
+  highlighting (🟢 >10%, 🟡 5–10%) layered on top, clickable URLs.
 
-v2 formatting:
-- Legend row in the primary + alternate reports:
-  🟢 >10% savings  🟡 5–10% savings  EXACT/CLOSE = confirmed match ·
-  APPROXIMATE = closest match for review
-- Match Type and Match Score columns (score = 60% four-criteria coverage
-  + 40% validation confidence, 0–100).
-- Alternate purchase list now has TWO sections in one table:
-  (a) equivalency-table findings (exact/close — PRD 5.4), and
-  (b) every order item that did NOT earn a primary price-match row, shown
-      with its closest reviewable candidate so nothing leaves the run
-      without an actionable lead.
+Price-match report: row selection logic UNCHANGED — exact four-criteria
+matches only, cheaper than Schein only, sorted by total savings descending.
+Match Type + Score render as one column: "EXACT (97%)".
+
+Alternate purchase list: every reviewable scraped candidate that matches a
+product NOT in the price-match report (plus equivalency-table findings).
+Columns follow the approved reference sheet:
+  Original Schein Product and Schein Price | Recommended Equivalent Product |
+  Recommended Supplier | Price of the Equivalent | Product URL | Match Score |
+  Equivalency Basis and Confidence Level | Estimated Savings vs. Schein Price
+Tiers: EXACT = same product · CLOSE = compatible specs · POSSIBLE = needs review.
 """
 from __future__ import annotations
 import logging
+import time
 from pathlib import Path
 from typing import List, Optional
 from urllib.parse import quote_plus
 
 from openpyxl import Workbook
-from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from .models import EquivalencyFinding, ItemResult, ParsedOrder, PriceCandidate
 
 log = logging.getLogger(__name__)
 
-HEADER_FILL = PatternFill("solid", fgColor="2F4858")
-HEADER_FONT = Font(color="FFFFFF", bold=True)
+# ------------------------------------------------------------- styling ------
+
+NAVY_FILL = PatternFill("solid", fgColor="1F3650")
+HEADER_FONT = Font(color="FFFFFF", bold=True, size=10)
+TITLE_FONT = Font(bold=True, size=12)
+LEGEND_FONT = Font(italic=True, size=9, color="595959")
+LINK_FONT = Font(color="0563C1", underline="single", size=9)
+BAND_FILL = PatternFill("solid", fgColor="EAF3EA")     # light green banding
 GREEN_FILL = PatternFill("solid", fgColor="C6EFCE")    # >10% savings
 YELLOW_FILL = PatternFill("solid", fgColor="FFEB9C")   # 5–10% savings
-LINK_FONT = Font(color="0563C1", underline="single")
-LEGEND_FONT = Font(italic=True, size=9, color="555555")
+BOLD = Font(bold=True)
+_thin = Side(style="thin", color="C9C9C9")
+CELL_BORDER = Border(left=_thin, right=_thin, top=_thin, bottom=_thin)
+_green = Side(style="medium", color="538135")
+TITLE_BORDER = Border(top=_green, bottom=_green)
+WRAP = Alignment(wrap_text=True, vertical="center")
+CENTER = Alignment(horizontal="center", vertical="center", wrap_text=True)
 MONEY = '"$"#,##0.00'
 
-LEGEND = ("🟢 >10% savings   🟡 5–10% savings   "
-          "EXACT/CLOSE = confirmed match · APPROXIMATE = closest match for review   "
-          "Product URL links to verified product or supplier search page")
+PM_LEGEND = ("🟢 >10% savings   🟡 5–10% savings   EXACT = all four trust criteria "
+             "confirmed (brand · product name · size/form · pack qty)   "
+             "Product URL links to the verified product page")
+ALT_LEGEND = ("Includes equivalency-table substitutions and all matching scraped "
+              "prices not in the Price Match report  ·  EXACT = same product · "
+              "CLOSE = compatible specs · POSSIBLE = needs review")
 
 
-# ------------------------------------------------------------- helpers ------
+def _now() -> str:
+    return time.strftime("%Y-%m-%d %H:%M")
+
+
+def _dash(v) -> object:
+    """'—' placeholder for empty cells (matches reference styling)."""
+    if v is None:
+        return "—"
+    s = str(v).strip()
+    return "—" if s == "" or s.lower() in ("none", "null", "n/a", "na", "-") else v
+
 
 def _clean(val) -> str:
-    """Sanitize scraped condition/notes — 'None'/'null' strings become ''."""
     if val is None:
         return ""
     s = str(val).strip()
@@ -66,57 +93,94 @@ def match_score(criteria: Optional[dict], confidence) -> int:
 
 
 def search_fallback_url(item) -> str:
-    """Supplier search page when no verified product URL exists."""
     q = item.search_query or item.description
     return f"https://www.google.com/search?tbm=shop&q={quote_plus(q)}"
 
 
-def _sheet(ws, headers: List[str], widths: List[int], legend: bool = False):
-    """Header block. With legend=True: row 1 = legend, row 2 = headers."""
-    if legend:
-        ws.append([LEGEND])
-        ws.merge_cells(start_row=1, start_column=1, end_row=1,
-                       end_column=len(headers))
-        ws.cell(row=1, column=1).font = LEGEND_FONT
-        ws.cell(row=1, column=1).alignment = Alignment(vertical="center")
+def _title_block(ws, title: str, legend: str, ncols: int,
+                 headers: List[str], widths: List[int]):
+    ws.append([title])
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=ncols)
+    c = ws.cell(row=1, column=1)
+    c.font, c.alignment = TITLE_FONT, CENTER
+    for col in range(1, ncols + 1):
+        ws.cell(row=1, column=col).border = TITLE_BORDER
+    ws.row_dimensions[1].height = 26
+
+    ws.append([legend])
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=ncols)
+    c = ws.cell(row=2, column=1)
+    c.font, c.alignment = LEGEND_FONT, CENTER
+    ws.row_dimensions[2].height = 16
+
     ws.append(headers)
-    hrow = ws.max_row
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
-        cell = ws.cell(row=hrow, column=i)
-        cell.fill, cell.font = HEADER_FILL, HEADER_FONT
-        cell.alignment = Alignment(vertical="center")
-    ws.freeze_panes = f"A{hrow + 1}"
+        cell = ws.cell(row=3, column=i)
+        cell.fill, cell.font, cell.alignment = NAVY_FILL, HEADER_FONT, CENTER
+        cell.border = CELL_BORDER
+    ws.row_dimensions[3].height = 32
+    ws.freeze_panes = "A4"
 
 
-def _money_cols(ws, cols: List[int], min_row: int = 2):
-    for row in ws.iter_rows(min_row=min_row):
-        for c in cols:
-            row[c - 1].number_format = MONEY
+def _style_row(ws, ridx: int, ncols: int, savings_pct: Optional[float],
+               band: bool, wrap_cols: set[int], link_col: Optional[int] = None,
+               url: str = "", bold_cols: set[int] = frozenset()):
+    fill = None
+    if savings_pct is not None:
+        fill = GREEN_FILL if savings_pct > 10 else (YELLOW_FILL if 5 <= savings_pct <= 10 else None)
+    if fill is None and band:
+        fill = BAND_FILL
+    for col in range(1, ncols + 1):
+        cell = ws.cell(row=ridx, column=col)
+        cell.border = CELL_BORDER
+        cell.alignment = WRAP if col in wrap_cols else Alignment(vertical="center")
+        if fill is not None:
+            cell.fill = fill
+        if col in bold_cols:
+            cell.font = BOLD
+    if link_col and url:
+        cell = ws.cell(row=ridx, column=link_col)
+        cell.value = url
+        cell.hyperlink = url
+        cell.font = LINK_FONT
+        cell.alignment = WRAP
 
 
-def _link_cell(ws, row: int, col: int, url: str):
-    if not url:
-        return
-    cell = ws.cell(row=row, column=col)
-    cell.value = url
-    cell.hyperlink = url
-    cell.font = LINK_FONT
+def _money(ws, ridx: int, cols: List[int]):
+    for c in cols:
+        cell = ws.cell(row=ridx, column=c)
+        if isinstance(cell.value, (int, float)):
+            cell.number_format = MONEY
 
 
-def _highlight(ws, row: int, ncols: int, savings_pct: Optional[float]):
-    if savings_pct is None:
-        return
-    fill = GREEN_FILL if savings_pct > 10 else (YELLOW_FILL if savings_pct >= 5 else None)
-    if fill:
-        for c in range(1, ncols + 1):
-            ws.cell(row=row, column=c).fill = fill
+def _savings_pct(per_unit: float, unit_price: float) -> Optional[float]:
+    if not unit_price:
+        return None
+    return per_unit / unit_price * 100
 
 
-def _has_primary_row(r: ItemResult) -> bool:
-    return (not r.routed_to_alternate and r.best_exact is not None
-            and r.best_exact.price is not None
-            and r.best_exact.price < r.item.unit_price)
+def _price_match_options(r: ItemResult, options_per_item: int = 3) -> List[PriceCandidate]:
+    """Same option selection as write_price_match_report — used for stream separation."""
+    if r.routed_to_alternate:
+        return []
+    opts: List[PriceCandidate] = []
+    exacts = [c for c in r.candidates
+              if c.price is not None and _is_exact_cand(r.item, c)
+              and not _pack_mismatch(r.item, c) and not _is_gated(c)]
+    if exacts:
+        opts.append(min(exacts, key=lambda c: c.price))
+    for c in _option_pool(r):
+        if len(opts) >= options_per_item:
+            break
+        if opts and c is opts[0]:
+            continue
+        opts.append(c)
+    return opts
+
+
+def _appears_in_price_match(r: ItemResult) -> bool:
+    return bool(_price_match_options(r))
 
 
 def _reviewable(c: PriceCandidate) -> bool:
@@ -126,150 +190,301 @@ def _reviewable(c: PriceCandidate) -> bool:
     return "login" not in reason and "sanity" not in reason
 
 
-_RANK = {"exact": 0, "approximate": 1, "rejected": 2, "unverified": 3}
+# tier mapping for the alternate sheet
+_TIER = {
+    "exact": ("EXACT", "EXACT — same product, different brand or channel; substitution is straightforward", 0),
+    "approximate": ("APPROXIMATE", "CLOSE — same category, compatible specs, minor differences; substitution likely acceptable", 1),
+    "rejected": ("POSSIBLE", "POSSIBLE — related product, requires client review before acting", 2),
+    "unverified": ("POSSIBLE", "POSSIBLE — unverified listing, requires client review before acting", 3),
+}
+_CRIT_LABEL = {"brand_match": "brand", "name_match": "product name",
+               "size_form_match": "form/spec", "pack_match": "pack size"}
 
 
-def pick_closest_candidate(r: ItemResult) -> Optional[PriceCandidate]:
-    """Best reviewable lead for an item that has no primary price-match row:
-    exact > approximate > verified-but-rejected (e.g. brand/variant mismatch)
-    > unverified; then highest match score, then lowest price."""
-    pool = [c for c in r.candidates if _reviewable(c)]
-    if not pool:
-        return None
-    best_rank = min(_RANK.get(c.match_type, 9) for c in pool)
-    pool = [c for c in pool if _RANK.get(c.match_type, 9) == best_rank]
-    # among the best rank, near-tied scores (within 15 pts of max) compete on
-    # price — a 2-point score edge shouldn't hide a 2x cheaper lead
-    smax = max(match_score(c.criteria, c.confidence) for c in pool)
-    pool = [c for c in pool if match_score(c.criteria, c.confidence) >= smax - 15]
-    pool.sort(key=lambda c: (c.price, -match_score(c.criteria, c.confidence)))
-    return pool[0]
-
-
-def _match_type_label(c: PriceCandidate) -> str:
-    return {"exact": "EXACT", "approximate": "APPROXIMATE",
-            "rejected": "REVIEW", "unverified": "UNVERIFIED"}.get(c.match_type, "REVIEW")
+def _basis_text(c: PriceCandidate) -> str:
+    label, sentence, _ = _TIER.get(c.match_type, _TIER["unverified"])
+    parts = [f"Web search (not in Price Match) · {label} ({match_score(c.criteria, c.confidence)}%)"]
+    matched = [_CRIT_LABEL[k] for k, v in (c.criteria or {}).items() if v]
+    missed = [_CRIT_LABEL[k] for k, v in (c.criteria or {}).items() if v is False]
+    if matched:
+        parts.append("Matching: " + ", ".join(matched))
+    if missed:
+        parts.append("Not matching: " + ", ".join(missed))
+    note = _clean(c.notes) or _clean(c.rejected_reason)
+    if note:
+        parts.append(note)
+    return sentence + "\n" + " · ".join(parts)
 
 
 # ------------------------------------------------------ primary report ------
 
-PM_HEADERS = ["Schein SKU", "Manufacturer Part Number", "Description", "Qty Ordered",
-              "Schein Unit Price", "Best Public Price", "Source Site", "Product URL",
-              "Qty/Pack Condition", "Match Type", "Match Score",
-              "Savings Per Unit", "Total Savings", "Savings %"]
-PM_WIDTHS = [12, 22, 44, 11, 16, 16, 20, 50, 22, 13, 12, 14, 13, 11]
+PM_HEADERS = ["Schein SKU", "Manufacturer Part\nNumber", "Description", "Qty\nOrder",
+              "Schein Unit\nPrice", "Best Public Price\nFound", "Match Score",
+              "Source Site", "Product URL Link",
+              'Pack/Qty Condition\n(e.g. "6-pack price")',
+              "Why Not Exact / Notes", "Savings Per\nUnit", "Total Savings"]
+PM_WIDTHS = [11, 15, 38, 7, 12, 13, 17, 17, 42, 18, 40, 12, 12]
+PM_WRAP = {3, 9, 10, 11}
+OPTION_FONT = Font(italic=True, color="7F7F7F")
+
+_OPT_RANK = {"exact": 0, "approximate": 1, "rejected": 2, "unverified": 3}
 
 
-def write_price_match_report(order: ParsedOrder, results: List[ItemResult], out: Path) -> Path:
-    """Primary negotiation report — exact matches only, sorted by total savings
-    descending. PRD 4.7 columns + URL, Match Type, Match Score, Savings %."""
+def _is_gated(c: PriceCandidate) -> bool:
+    return "login" in (c.rejected_reason or "").lower()
+
+
+def _pack_mismatch(item, c: PriceCandidate) -> bool:
+    """Hard exclusion from the price-match report: a known different pack
+    size is never negotiation-grade, no matter how cheap (PRD 4.5)."""
+    if (c.criteria or {}).get("pack_match") is False:
+        return True
+    try:
+        if c.pack_qty and item.pack_qty and int(c.pack_qty) != int(item.pack_qty):
+            return True
+    except (TypeError, ValueError):
+        pass
+    cond = (_clean(c.pack_condition) or "").lower()
+    return any(k in cond for k in
+               ("smaller pack", "larger pack", "case lot", "single unit",
+                "instead of", "-pack price (ordered pack"))
+
+
+def _brand_ok(item, c: PriceCandidate) -> bool:
+    return bool((c.criteria or {}).get("brand_match")) or not getattr(item, "brand", None)
+
+
+def _option_pool(r: ItemResult) -> list[PriceCandidate]:
+    """Non-exact candidates eligible as options: approximate first, then
+    verified-but-rejected (variant/brand mismatch), then unverified. Login-
+    gated candidates with a search-listed price are allowed LAST, clearly
+    labeled, only to fill otherwise-empty slots. Sanity rejects never appear.
+    Within the leading rank, near-tied scores (15 pts) compete on price."""
+    pool, seen = [], set()
+    for c in r.candidates:
+        if c.price is None or c.price <= 0 or c.url in seen:
+            continue
+        if "sanity" in (c.rejected_reason or "").lower():
+            continue
+        if _pack_mismatch(r.item, c):
+            continue                      # stays in alternate + evidence only
+        seen.add(c.url)
+        pool.append(c)
+
+    def key(c):
+        rank = 5 if _is_gated(c) else _OPT_RANK.get(c.match_type, 3)
+        return (rank, -match_score(c.criteria, c.confidence), c.price)
+
+    pool.sort(key=key)
+    if len(pool) > 1:
+        lead = 5 if _is_gated(pool[0]) else _OPT_RANK.get(pool[0].match_type, 3)
+        block = [c for c in pool if (5 if _is_gated(c) else _OPT_RANK.get(c.match_type, 3)) == lead]
+        rest = [c for c in pool if c not in block]
+        smax = max(match_score(c.criteria, c.confidence) for c in block)
+        block.sort(key=lambda c: (match_score(c.criteria, c.confidence) < smax - 15, c.price))
+        pool = block + rest
+    return pool
+
+
+def _why_not_exact(c: PriceCandidate) -> str:
+    if _is_gated(c):
+        return ("GATED — pricing requires login/membership on this site; price shown "
+                "comes from the public search listing. Verify manually before negotiating.")
+    missed = [_CRIT_LABEL[k] for k, v in (c.criteria or {}).items() if v is False]
+    note = _clean(c.notes) or _clean(c.rejected_reason)
+    parts = []
+    if missed:
+        parts.append("Not exact — mismatch on: " + ", ".join(missed))
+    if note:
+        parts.append(note)
+    return " · ".join(parts) or "Not exact — could not confirm all four trust criteria"
+
+
+def _score_label(item, c: PriceCandidate) -> str:
+    """Label derives from the criteria themselves, never from a raw
+    match_type that contradicts them."""
+    if _is_gated(c):
+        return f"GATED ({match_score(c.criteria, c.confidence)}%)"
+    if _is_exact_cand(item, c):
+        label = "EXACT"
+    elif c.match_type in ("exact", "approximate"):
+        label = "APPROXIMATE"
+    else:
+        label = "POSSIBLE"
+    return f"{label} ({match_score(c.criteria, c.confidence)}%)"
+
+
+def _is_exact_cand(item, c: PriceCandidate) -> bool:
+    crit = c.criteria or {}
+    return (crit.get("name_match") and crit.get("size_form_match")
+            and crit.get("pack_match") and _brand_ok(item, c))
+
+
+def write_price_match_report(order: ParsedOrder, results: List[ItemResult],
+                             out: Path, options_per_item: int = 3) -> Path:
+    """Primary negotiation report — up to 3 options per item.
+    Row layout (per approved screenshot): the item's main row carries the full
+    item details with Option 1; Options 2-3 render as indented "↳ Option N"
+    sub-rows (SKU/MPN/Qty/Schein-price left blank) directly beneath it.
+    Item groups are sorted by their best total savings descending."""
     wb = Workbook()
     ws = wb.active
     ws.title = "Price Match"
-    _sheet(ws, PM_HEADERS, PM_WIDTHS, legend=True)
+    title = (f"Henry Schein Price Match Negotiation  ·  Ref: {order.reference or '—'}"
+             f"  ·  Date: {order.order_date or '—'}"
+             f"  ·  Patient: {getattr(order, 'ship_to_name', None) or '—'}"
+             f"  ·  Generated: {_now()}")
+    legend = ("🟢 >10% savings   🟡 5–10% savings   Main row = best option (EXACT when "
+              "available) · ↳ Option 2-3 = next-closest matches with reasoning · "
+              "GATED = login/membership pricing, verify manually")
+    _title_block(ws, title, legend, len(PM_HEADERS), PM_HEADERS, PM_WIDTHS)
 
-    rows = []
+    groups = []
     for r in results:
-        if not _has_primary_row(r):
+        opts = _price_match_options(r, options_per_item)
+        if not opts:
             continue
-        b = r.best_exact
-        per_unit = round(r.item.unit_price - b.price, 2)
-        pct = per_unit / r.item.unit_price * 100
-        rows.append(([
-            r.item.schein_sku, r.item.mpn or "", r.item.description, r.item.qty,
-            r.item.unit_price, b.price, b.source_site, b.url,
-            _clean(b.pack_condition), "EXACT", match_score(b.criteria, b.confidence),
-            per_unit, round(per_unit * r.item.qty, 2), round(pct, 1),
-        ], pct, b.url))
-    rows.sort(key=lambda x: x[0][-2], reverse=True)
+        best_total = max(round((r.item.unit_price - c.price) * r.item.qty, 2)
+                         for c in opts)
+        groups.append((best_total, r, opts))
 
-    for vals, pct, url in rows:
-        ws.append(vals)
-        ridx = ws.max_row
-        _highlight(ws, ridx, len(PM_HEADERS), pct)
-        _link_cell(ws, ridx, 8, url)
-    _money_cols(ws, [5, 6, 12, 13], min_row=3)
+    groups.sort(key=lambda g: g[0], reverse=True)
+    band = 0
+    for _, r, opts in groups:
+        for n, c in enumerate(opts, start=1):
+            per_unit = round(r.item.unit_price - c.price, 2)
+            total = round(per_unit * r.item.qty, 2)
+            pct = _savings_pct(per_unit, r.item.unit_price)
+            if _is_exact_cand(r.item, c):
+                reason = ("Exact — all four trust criteria confirmed"
+                          if n == 1 else
+                          "Exact — all four trust criteria confirmed (alternate source, higher price than Option 1)")
+            else:
+                reason = _why_not_exact(c)
+
+            if n == 1:
+                ws.append([r.item.schein_sku, _dash(r.item.mpn), r.item.description,
+                           r.item.qty, r.item.unit_price, c.price, _score_label(r.item, c),
+                           c.source_site, c.url, _dash(_clean(c.pack_condition)),
+                           reason, per_unit, total])
+                ridx = ws.max_row
+                _style_row(ws, ridx, len(PM_HEADERS), pct, band % 2 == 0, PM_WRAP,
+                           link_col=9, url=c.url, bold_cols={13})
+                _money(ws, ridx, [5, 6, 12, 13])
+            else:
+                ws.append(["", "", f"   ↳ Option {n}", "", "", c.price,
+                           _score_label(r.item, c), c.source_site, c.url,
+                           _dash(_clean(c.pack_condition)), reason, per_unit, total])
+                ridx = ws.max_row
+                # sub-rows stay unfilled (white) per the reference screenshot
+                _style_row(ws, ridx, len(PM_HEADERS), None, False, PM_WRAP,
+                           link_col=9, url=c.url)
+                ws.cell(row=ridx, column=3).font = OPTION_FONT
+                _money(ws, ridx, [6, 12, 13])
+            ws.row_dimensions[ridx].height = 56
+        band += 1
     wb.save(out)
-    log.info("Price match report: %d row(s) with savings → %s", len(rows), out.name)
+    n_rows = sum(len(o) for _, _, o in groups)
+    log.info("Price match report: %d item(s), %d option row(s) → %s",
+             len(groups), n_rows, out.name)
     return out
 
 
 # ---------------------------------------------------- alternate report ------
 
-ALT_HEADERS = ["Schein SKU", "Original Product (Schein)", "Schein Unit Price",
-               "Recommended Alternative", "Match Type", "Match Score",
-               "Basis / Notes", "Supplier", "Product URL", "Alt Price",
-               "Pack/Qty Condition", "Est. Savings Per Unit", "Est. Total Savings",
-               "Savings %"]
-ALT_WIDTHS = [12, 40, 14, 38, 18, 12, 44, 20, 50, 13, 22, 14, 14, 11]
+ALT_HEADERS = ["Original Schein Product and\nSchein Price",
+               "Recommended Equivalent Product", "Recommended Supplier",
+               "Price of the\nEquivalent", "Product URL", "Match Score",
+               "Equivalency Basis and Confidence Level",
+               "Estimated Savings vs.\nSchein Price"]
+ALT_WIDTHS = [34, 36, 19, 12, 44, 16, 52, 20]
+ALT_WRAP = {1, 2, 7}
+
+
+def _alt_row(ws, band, item, equiv_name, supplier, price, url, score_label,
+             basis, savings_cell, pct):
+    ws.append([
+        f"{item.description}\nSKU: {item.schein_sku}  ·  Schein price: ${item.unit_price:,.2f}/unit",
+        equiv_name, supplier or "—", price, url, score_label, basis, savings_cell,
+    ])
+    ridx = ws.max_row
+    _style_row(ws, ridx, len(ALT_HEADERS), pct, band % 2 == 0, ALT_WRAP,
+               link_col=5, url=url)
+    _money(ws, ridx, [4, 8])
+    ws.row_dimensions[ridx].height = 64
+    return ridx
 
 
 def write_alternate_purchase_list(order: ParsedOrder,
                                   findings: List[EquivalencyFinding], out: Path,
                                   results: Optional[List[ItemResult]] = None) -> Path:
-    """Stage 2 output (PRD 5.4) — equivalency exact/close rows — PLUS every
-    order item that didn't make the primary price-match list, paired with its
-    closest reviewable candidate (or a supplier search link if none)."""
+    """Stage 2 output — equivalency-table findings PLUS every reviewable
+    scraped candidate for items that did not make the Price Match report.
+    Items here never appear in the Price Match report (stream separation)."""
     wb = Workbook()
     ws = wb.active
     ws.title = "Alternate Purchases"
-    _sheet(ws, ALT_HEADERS, ALT_WIDTHS, legend=True)
-    nrows = 0
+    title = (f"Alternate Purchase Recommendations  ·  Ref: {order.reference or '—'}"
+             f"  ·  Generated: {_now()}"
+             f"  ·  Items here do NOT appear in the Price Match report")
+    _title_block(ws, title, ALT_LEGEND, len(ALT_HEADERS), ALT_HEADERS, ALT_WIDTHS)
 
-    # Section A — equivalency-table findings (confirmed equivalents)
+    entries = []   # (tier_rank, item_order_idx, price, row-args)
+    order_idx = {i.schein_sku: n for n, i in enumerate(order.items)}
+
+    # A — equivalency-table findings (confirmed substitutions)
     equivalency_skus = set()
     for f in findings:
         if f.confidence_level not in ("exact_equivalent", "close_equivalent"):
             continue
         equivalency_skus.add(f.item.schein_sku)
-        per_unit = (round(f.item.unit_price - f.price, 2) if f.price else None)
-        pct = (per_unit / f.item.unit_price * 100) if per_unit is not None else None
-        url = f.url or search_fallback_url(f.item)
-        label = "EXACT (equivalent)" if f.confidence_level == "exact_equivalent" else "CLOSE (equivalent)"
-        ws.append([f.item.schein_sku, f.item.description, f.item.unit_price,
-                   f.equivalent_name, label, "", f.basis, f.supplier or "",
-                   url, f.price, _clean(f.pack_condition),
-                   per_unit, f.est_savings_total,
-                   round(pct, 1) if pct is not None else ""])
-        ridx = ws.max_row
-        _highlight(ws, ridx, len(ALT_HEADERS), pct)
-        _link_cell(ws, ridx, 9, url)
-        nrows += 1
+        label = "EXACT" if f.confidence_level == "exact_equivalent" else "CLOSE"
+        sentence = _TIER["exact"][1] if label == "EXACT" else _TIER["approximate"][1]
+        basis = sentence + "\nEquivalency table (client-maintained) · " + (f.basis or "")
+        per_unit = round(f.item.unit_price - f.price, 2) if f.price else None
+        pct = _savings_pct(per_unit, f.item.unit_price) if per_unit is not None else None
+        savings = (per_unit if per_unit and per_unit > 0
+                   else (f"Equiv ${f.price:,.2f} > Schein ${f.item.unit_price:,.2f}"
+                         if f.price else "—"))
+        entries.append((-1, order_idx.get(f.item.schein_sku, 999), f.price or 0,
+                        (f.item, f.equivalent_name, f.supplier, f.price,
+                         f.url or search_fallback_url(f.item), f"{label} (table)",
+                         basis, savings, pct)))
 
-    # Section B — items with no primary price-match row → closest lead
+    # B — all reviewable scraped candidates for items not in Price Match
     for r in (results or []):
-        if _has_primary_row(r) or r.item.schein_sku in equivalency_skus:
+        if _appears_in_price_match(r) or r.item.schein_sku in equivalency_skus:
             continue
-        c = pick_closest_candidate(r)
-        if c is None:
+        pool, seen = [], set()
+        for c in r.candidates:
+            if _reviewable(c) and c.url not in seen:
+                seen.add(c.url)
+                pool.append(c)
+        if not pool:
             url = search_fallback_url(r.item)
-            ws.append([r.item.schein_sku, r.item.description, r.item.unit_price,
-                       "— no public candidate found —", "REVIEW", 0,
-                       "No usable public listing this run; link opens a supplier search",
-                       "", url, None, "", None, None, ""])
-            ridx = ws.max_row
-            _link_cell(ws, ridx, 9, url)
-            nrows += 1
+            entries.append((9, order_idx.get(r.item.schein_sku, 999), 0,
+                            (r.item, "— no public candidate found this run —", "—",
+                             None, url, "POSSIBLE (0%)",
+                             "POSSIBLE — no usable public listing found; link opens a supplier search",
+                             "—", None)))
             continue
-        per_unit = round(r.item.unit_price - c.price, 2)
-        pct = per_unit / r.item.unit_price * 100
-        note = _clean(c.notes) or _clean(c.rejected_reason)
-        if per_unit <= 0:
-            note = (note + " · " if note else "") + "No cheaper public price found"
-        url = c.url or search_fallback_url(r.item)
-        ws.append([r.item.schein_sku, r.item.description, r.item.unit_price,
-                   c.scraped_product_name or c.title, _match_type_label(c),
-                   match_score(c.criteria, c.confidence), note,
-                   c.source_site, url, c.price, _clean(c.pack_condition),
-                   per_unit, round(per_unit * r.item.qty, 2), round(pct, 1)])
-        ridx = ws.max_row
-        _highlight(ws, ridx, len(ALT_HEADERS), pct)
-        _link_cell(ws, ridx, 9, url)
-        nrows += 1
+        for c in pool:
+            label, _, rank = _TIER.get(c.match_type, _TIER["unverified"])
+            per_unit = round(r.item.unit_price - c.price, 2)
+            pct = _savings_pct(per_unit, r.item.unit_price)
+            savings = (per_unit if per_unit > 0 else
+                       f"Equiv ${c.price:,.2f} > Schein ${r.item.unit_price:,.2f}")
+            entries.append((rank, order_idx.get(r.item.schein_sku, 999), c.price,
+                            (r.item, c.scraped_product_name or c.title,
+                             c.source_site, c.price, c.url or search_fallback_url(r.item),
+                             f"{label} ({match_score(c.criteria, c.confidence)}%)",
+                             _basis_text(c), savings, pct)))
 
-    _money_cols(ws, [3, 10, 12, 13], min_row=3)
+    entries.sort(key=lambda e: (e[0], e[1], e[2]))
+    for band, (_, _, _, args) in enumerate(entries):
+        _alt_row(ws, band, *args)
     wb.save(out)
-    log.info("Alternate purchases report: %d row(s) → %s", nrows, out.name)
+    log.info("Alternate purchases report: %d row(s) → %s", len(entries), out.name)
     return out
 
 
@@ -283,68 +498,91 @@ def write_evidence_file(order: ParsedOrder, results: List[ItemResult],
 
     ws = wb.active
     ws.title = "All Findings"
-    _sheet(ws, ["Schein SKU", "Description", "Candidate Title", "Source Site",
-                "Product URL", "Price", "Pack Qty", "Pack/Qty Condition",
-                "Match Type", "Match Score", "Confidence", "Brand✓", "Name✓",
-                "Size✓", "Pack✓", "Notes / Rejection Reason"],
-           [12, 38, 42, 18, 52, 12, 9, 22, 13, 12, 11, 7, 7, 7, 7, 48])
+    title = (f"Background Evidence  ·  Ref: {order.reference or '—'}"
+             f"  ·  Generated: {_now()}")
+    headers = ["Schein SKU", "Description", "Candidate Title", "Source Site",
+               "Product URL", "Price", "Pack\nQty", "Pack/Qty Condition",
+               "Match Type", "Match\nScore", "Confidence", "Brand✓", "Name✓",
+               "Size✓", "Pack✓", "Notes / Rejection Reason"]
+    widths = [11, 32, 36, 16, 44, 11, 7, 18, 12, 9, 10, 6, 6, 6, 6, 42]
+    _title_block(ws, title, "Every price found, every condition, every rejection — nothing discarded",
+                 len(headers), headers, widths)
+    band = 0
     for r in results:
         if not r.candidates:
-            ws.append([r.item.schein_sku, r.item.description, "— no public candidates found —",
-                       "", "", None, None, "", "none", 0, 0, "", "", "", "", ""])
+            ws.append([r.item.schein_sku, r.item.description,
+                       "— no public candidates found —", "—", "—",
+                       None, None, "—", "none", 0, 0, "", "", "", "", "—"])
+            _style_row(ws, ws.max_row, len(headers), None, band % 2 == 0, {2, 3, 16})
+            band += 1
         for c in r.candidates:
             ws.append([
                 r.item.schein_sku, r.item.description, c.title, c.source_site,
-                c.url, c.price, c.pack_qty, _clean(c.pack_condition),
+                c.url, c.price, c.pack_qty, _dash(_clean(c.pack_condition)),
                 c.match_type, match_score(c.criteria, c.confidence), c.confidence,
                 *("Y" if c.criteria.get(k) else ("N" if k in c.criteria else "")
                   for k in ("brand_match", "name_match", "size_form_match", "pack_match")),
-                c.rejected_reason or _clean(c.notes) or "",
+                c.rejected_reason or _clean(c.notes) or "—",
             ])
-            _link_cell(ws, ws.max_row, 5, c.url)
-    _money_cols(ws, [6])
+            _style_row(ws, ws.max_row, len(headers), None, band % 2 == 0,
+                       {2, 3, 8, 16}, link_col=5, url=c.url)
+            _money(ws, ws.max_row, [6])
+            band += 1
 
     ws2 = wb.create_sheet("Equivalency Findings")
-    _sheet(ws2, ["Schein SKU", "Original Product", "Equivalent", "Confidence",
-                 "Basis", "Supplier", "Product URL", "Price", "Routed To"],
-           [12, 40, 36, 20, 46, 20, 52, 12, 24])
-    for f in findings:
+    h2 = ["Schein SKU", "Original Product", "Equivalent", "Confidence",
+          "Basis", "Supplier", "Product URL", "Price", "Routed To"]
+    _title_block(ws2, "Equivalency Findings (all levels)", "Table-driven — PRD 5.6",
+                 len(h2), h2, [11, 36, 32, 18, 42, 18, 46, 11, 22])
+    for band, f in enumerate(findings):
         routed = ("Alternate Purchase List"
                   if f.confidence_level in ("exact_equivalent", "close_equivalent")
                   else "Evidence only — manual review")
         ws2.append([f.item.schein_sku, f.item.description, f.equivalent_name,
                     f.confidence_level.replace("_", " "), f.basis,
-                    f.supplier or "", f.url or "", f.price, routed])
-        if f.url:
-            _link_cell(ws2, ws2.max_row, 7, f.url)
-    _money_cols(ws2, [8])
+                    f.supplier or "—", f.url or "—", f.price, routed])
+        _style_row(ws2, ws2.max_row, len(h2), None, band % 2 == 0, {2, 3, 5},
+                   link_col=7 if f.url else None, url=f.url or "")
+        _money(ws2, ws2.max_row, [8])
 
     ws3 = wb.create_sheet("Flagged Sites")
-    _sheet(ws3, ["Schein SKU", "Site / URL", "Reason"], [12, 52, 40])
+    h3 = ["Schein SKU", "Site / URL", "Reason"]
+    _title_block(ws3, "Flagged Sites", "Login-required / no public price — skipped, never accessed",
+                 len(h3), h3, [11, 50, 38])
+    band = 0
     for r in results:
         for s in r.flagged_sites:
             ws3.append([r.item.schein_sku, s, "login required / no public price"])
+            _style_row(ws3, ws3.max_row, len(h3), None, band % 2 == 0, {2, 3})
+            band += 1
         for c in r.candidates:
             if c.rejected_reason and "login" in c.rejected_reason:
                 ws3.append([r.item.schein_sku, c.url, c.rejected_reason])
+                _style_row(ws3, ws3.max_row, len(h3), None, band % 2 == 0, {2, 3},
+                           link_col=2, url=c.url)
+                band += 1
 
     ws4 = wb.create_sheet("Parsed Order Audit")
-    _sheet(ws4, ["Qty", "Schein SKU", "Description", "UOM", "Unit Price",
-                 "Extended Price", "Pack Qty", "MPN", "Brand", "Variant"],
-           [7, 12, 48, 7, 13, 14, 9, 18, 16, 16])
-    for r in results:
+    h4 = ["Qty", "Schein SKU", "Description", "UOM", "Unit Price",
+          "Extended Price", "Pack Qty", "MPN", "Brand", "Variant"]
+    _title_block(ws4, f"Parsed Order Audit  ·  {order.source_file}",
+                 "Every extracted line item — totals must reconcile with the PDF",
+                 len(h4), h4, [6, 11, 44, 6, 12, 13, 8, 16, 14, 14])
+    for band, r in enumerate(results):
         i = r.item
         ws4.append([i.qty, i.schein_sku, i.description, i.uom, i.unit_price,
-                    i.extended_price, i.pack_qty, i.mpn or "", i.brand or "", i.variant or ""])
+                    i.extended_price, _dash(i.pack_qty), _dash(i.mpn),
+                    _dash(i.brand), _dash(i.variant)])
+        _style_row(ws4, ws4.max_row, len(h4), None, band % 2 == 0, {3})
+        _money(ws4, ws4.max_row, [5, 6])
     ws4.append([])
     ws4.append(["", "", "Computed total", "", "", order.computed_total])
     ws4.append(["", "", "Printed PDF total", "", "", order.total_price])
-    _money_cols(ws4, [5, 6])
+    for rr in (ws4.max_row - 1, ws4.max_row):
+        ws4.cell(row=rr, column=3).font = BOLD
+        ws4.cell(row=rr, column=6).number_format = MONEY
+        ws4.cell(row=rr, column=6).font = BOLD
 
     wb.save(out)
-    candidate_rows = sum(len(r.candidates) for r in results) or len(results)
-    log.info(
-        "Evidence file: %d candidate row(s), %d equivalency finding(s) → %s",
-        candidate_rows, len(findings), out.name,
-    )
+    log.info("Evidence file written → %s", out.name)
     return out

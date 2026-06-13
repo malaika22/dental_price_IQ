@@ -20,11 +20,13 @@ class OrderLineItem(BaseModel):
     variant: Optional[str] = None            # shade/color/size e.g. "A2", "Green 6.5mm"
     mpn: Optional[str] = None                # manufacturer part number
     search_query: Optional[str] = None
+    generic_query: Optional[str] = None   # brand-stripped query for house-brand items
 
 
 class ParsedOrder(BaseModel):
     source_file: str
     reference: Optional[str] = None
+    ship_to_name: Optional[str] = None
     order_date: Optional[str] = None
     total_price: Optional[float] = None
     items: List[OrderLineItem] = Field(default_factory=list)

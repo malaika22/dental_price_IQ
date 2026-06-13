@@ -57,74 +57,64 @@ def volume_compatible(item: OrderLineItem, c: PriceCandidate) -> Optional[bool]:
     return abs(a - b) / a <= 0.02
 
 
+
+def _brand_ok(item: OrderLineItem, c: PriceCandidate) -> bool:
+    """Brand criterion passes when confirmed, or when the reference item has
+    no identifiable brand (generic/house items like 'Barrier Film Blue')."""
+    return bool((c.criteria or {}).get("brand_match")) or not item.brand
+
+
+def _effective_exact(item: OrderLineItem, c: PriceCandidate) -> bool:
+    crit = c.criteria or {}
+    return (crit.get("name_match") and crit.get("size_form_match")
+            and crit.get("pack_match") and _brand_ok(item, c))
+
 # --------------------------------------------------------------- pipeline ---
 
-def process_item(item: OrderLineItem, max_verify: int = 5) -> ItemResult:
-    sku = item.schein_sku
-    log.info(
-        "SKU %s — processing started: %r (Schein unit=$%.2f)",
-        sku, item.description[:50], item.unit_price,
-    )
+def process_item(item: OrderLineItem, max_verify: int = 8) -> ItemResult:
     result = ItemResult(item=item)
     cands, flagged = search.market_sweep(item)
     result.flagged_sites = flagged
 
     # verify the most promising candidates on-page (JS rendered)
     verified: List[PriceCandidate] = []
-    verify_num = 0
     for c in cands:
         if len([v for v in verified if v.match_type != "rejected"]) >= max_verify:
-            log.debug("SKU %s — skipping unverified candidate %s (max_verify=%d reached)",
-                      sku, c.url[:60], max_verify)
             result.candidates.append(c)       # unverified leftovers -> evidence
             continue
-        verify_num += 1
-        log.info("SKU %s — verifying candidate %d: %s", sku, verify_num, c.url[:80])
-        c = search.firecrawl_verify(c, sku=sku)
+        c = search.firecrawl_verify(c, sku=item.schein_sku)
         # deterministic demotions before AI sees them
         if c.match_type != "rejected":
             if not price_sane(item, c):
                 c.match_type = "rejected"
                 c.rejected_reason = (c.rejected_reason or
                                      f"price {c.price} failed sanity vs Schein unit {item.unit_price}")
-                log.info("SKU %s — rejected (price sanity): $%s vs Schein $%.2f",
-                         sku, c.price, item.unit_price)
             elif pack_compatible(item, c) is False and c.pack_condition is None:
                 c.pack_condition = f"{c.pack_qty}-pack price (ordered pack: {item.pack_qty})"
-                log.info("SKU %s — pack mismatch noted: ordered %s, page %s",
-                         sku, item.pack_qty, c.pack_qty)
             elif volume_compatible(item, c) is False:
                 c.match_type = "rejected"
                 c.rejected_reason = "volume/size mismatch after normalization"
-                log.info("SKU %s — rejected (volume mismatch)", sku)
         verified.append(c)
 
     to_validate = [c for c in verified if c.match_type != "rejected"]
-    if to_validate:
-        log.info("SKU %s — sending %d candidate(s) to Groq validation", sku, len(to_validate))
-        ai.validate_candidates(item, to_validate)
-    else:
-        log.warning("SKU %s — no candidates survived pre-checks for Groq validation", sku)
+    ai.validate_candidates(item, to_validate)
+    # consistency guard: Groq may not call something exact its own criteria deny
+    for c in verified:
+        if c.match_type == "exact" and c.criteria and not _effective_exact(item, c):
+            c.match_type = "approximate"
+            log.info("SKU %s — demoted %s to approximate (criteria contradict exact)",
+                     item.schein_sku, c.source_site)
     result.candidates.extend(verified)
 
     # Best exact: all four criteria true. Pack-mismatched candidates can NEVER
     # be primary, regardless of how cheap they are — they go to evidence with
     # their condition shown (PRD 4.5 / 4.6).
     exacts = [c for c in verified
-              if c.match_type == "exact" and all(c.criteria.get(k) for k in
-                 ("brand_match", "name_match", "size_form_match", "pack_match"))
+              if c.match_type == "exact" and _effective_exact(item, c)
+              and pack_compatible(item, c) is not False
               and c.price is not None]
     if exacts:
         result.best_exact = min(exacts, key=lambda c: c.price)
-        savings = round(item.unit_price - result.best_exact.price, 2)
-        log.info(
-            "SKU %s — best exact match: $%s at %s (saves $%.2f/unit) %s",
-            sku, result.best_exact.price, result.best_exact.source_site,
-            savings, result.best_exact.url[:80],
-        )
-    else:
-        log.info("SKU %s — no exact match found (%d candidate(s) in evidence)",
-                 sku, len(result.candidates))
     return result
 
 
@@ -137,7 +127,6 @@ def load_equivalency_table(config_dir: Path) -> List[EquivalencyEntry]:
     f = config_dir / "equivalency_table.txt"
     entries: List[EquivalencyEntry] = []
     if not f.exists():
-        log.warning("Equivalency table not found at %s", f)
         return entries
     for line in f.read_text().splitlines():
         line = line.split("#")[0].strip()
@@ -151,7 +140,6 @@ def load_equivalency_table(config_dir: Path) -> List[EquivalencyEntry]:
             equivalent_brand=parts[2] if len(parts) > 2 and parts[2] else None,
             notes=parts[3] if len(parts) > 3 else None,
         ))
-    log.info("Loaded %d equivalency entries from %s", len(entries), f.name)
     return entries
 
 
@@ -163,10 +151,6 @@ def run_equivalency(result: ItemResult, entries: List[EquivalencyEntry]) -> Opti
     if not matches:
         return None
     e = matches[0]
-    log.info(
-        "SKU %s — equivalency lookup: %r → %r",
-        item.schein_sku, item.description[:40], e.equivalent_name[:40],
-    )
 
     # price the equivalent on the open market
     probe = OrderLineItem(
@@ -184,11 +168,6 @@ def run_equivalency(result: ItemResult, entries: List[EquivalencyEntry]) -> Opti
             best = c
 
     market = (f"${best.price} at {best.source_site} ({best.url})" if best else "no public price found")
-    if best:
-        log.info("SKU %s — equivalent best price: $%s at %s", item.schein_sku, best.price, best.source_site)
-    else:
-        log.warning("SKU %s — no public price found for equivalent %r", item.schein_sku, e.equivalent_name)
-
     verdict = ai.evaluate_equivalency(item, e.equivalent_name, e.notes or "", market)
     level = verdict.get("confidence_level", "possible_alternative")
 
@@ -206,7 +185,4 @@ def run_equivalency(result: ItemResult, entries: List[EquivalencyEntry]) -> Opti
     # negotiation report entirely.
     if level in ("exact_equivalent", "close_equivalent"):
         result.routed_to_alternate = True
-        log.info("SKU %s — routed to alternate purchases (%s)", item.schein_sku, level)
-    else:
-        log.info("SKU %s — equivalency %s (evidence only)", item.schein_sku, level)
     return finding

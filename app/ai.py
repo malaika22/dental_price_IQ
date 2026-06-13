@@ -57,12 +57,11 @@ def _pace():
         _last_call = time.monotonic()
 
 
-def _ask_json(prompt: str, max_tokens: int = 4000, label: str = "Groq") -> dict:
+def _ask_json(prompt: str, max_tokens: int = 4000) -> dict:
     last_err = None
     for attempt in range(MAX_RETRIES):
         _pace()
         try:
-            log.debug("%s request (attempt %d/%d, max_tokens=%d)", label, attempt + 1, MAX_RETRIES, max_tokens)
             resp = client().chat.completions.create(
                 model=MODEL,
                 max_tokens=max_tokens,
@@ -78,32 +77,22 @@ def _ask_json(prompt: str, max_tokens: int = 4000, label: str = "Groq") -> dict:
             text = resp.choices[0].message.content or ""
             text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
             try:
-                parsed = json.loads(text)
-                log.debug("%s call succeeded (%d chars response)", label, len(text))
-                return parsed
+                return json.loads(text)
             except json.JSONDecodeError:
                 m = re.search(r"\{.*\}", text, re.S)   # salvage outermost object
                 if m:
-                    parsed = json.loads(m.group(0))
-                    log.debug("%s call succeeded (salvaged JSON from response)", label)
-                    return parsed
+                    return json.loads(m.group(0))
                 raise
         except (RateLimitError, APIStatusError) as e:
             last_err = e
             backoff = min(2 ** attempt * 2, 30)
-            log.warning("%s %s — retrying in %ss (attempt %d/%d)",
-                        label, type(e).__name__, backoff, attempt + 1, MAX_RETRIES)
+            log.warning("Groq %s — retrying in %ss (attempt %d/%d)",
+                        type(e).__name__, backoff, attempt + 1, MAX_RETRIES)
             time.sleep(backoff)
         except json.JSONDecodeError as e:
             last_err = e
-            log.warning("%s returned unparseable JSON — retrying (attempt %d)", label, attempt + 1)
-        except Exception as e:
-            last_err = e
-            log.error("%s unexpected error: %s (attempt %d/%d)", label, e, attempt + 1, MAX_RETRIES)
-            backoff = min(2 ** attempt * 2, 30)
-            time.sleep(backoff)
-    log.error("%s FAILED after %d attempts: %s", label, MAX_RETRIES, last_err)
-    raise RuntimeError(f"{label} call failed after {MAX_RETRIES} attempts: {last_err}")
+            log.warning("Groq returned unparseable JSON — retrying (attempt %d)", attempt + 1)
+    raise RuntimeError(f"Groq call failed after {MAX_RETRIES} attempts: {last_err}")
 
 
 def _results(data) -> list:
@@ -141,6 +130,13 @@ line, same order, each with keys:
 - mpn (string|null)
 - search_query (string)         # best web search query to find this exact product,
                                 # include brand, product, variant and pack size
+- generic_query (string)        # SECOND query with the brand REMOVED: product
+                                # type + spec + variant + pack only, e.g.
+                                # "high performance mixing tips 4.2mm yellow 48 pack".
+                                # CRITICAL for Henry Schein house brands (Acclean,
+                                # Maxima, Criterion, Benzo-Jel, Foamies, Neotray):
+                                # no other supplier sells these under the Schein
+                                # name, so the generic query finds the equivalents.
 
 Order lines:
 {lines}
@@ -149,46 +145,27 @@ Order lines:
 
 def parse_items_batch(items: List[OrderLineItem], chunk_size: int = 12) -> List[OrderLineItem]:
     """Batched parsing. Chunked to stay inside free-tier output-token limits."""
-    total_chunks = (len(items) + chunk_size - 1) // chunk_size
-    log.info("Groq parse: %d items in %d chunk(s) (model=%s)", len(items), total_chunks, MODEL)
     by_sku = {}
     failed_chunks = 0
+    total_chunks = (len(items) + chunk_size - 1) // chunk_size
     for chunk_idx, start in enumerate(range(0, len(items), chunk_size), start=1):
         chunk = items[start:start + chunk_size]
-        skus = [i.schein_sku for i in chunk]
-        log.info(
-            "Groq parse chunk %d/%d — SKUs %s …",
-            chunk_idx, total_chunks, ", ".join(skus),
-        )
         lines = "\n".join(
             f'{i.schein_sku} | "{i.description}" | UOM {i.uom}' for i in chunk
         )
         try:
-            data = _ask_json(
-                PARSE_PROMPT.format(lines=lines), max_tokens=4000,
-                label=f"Groq-parse chunk {chunk_idx}/{total_chunks}",
-            )
-            parsed = _results(data)
-            for d in parsed:
+            data = _ask_json(PARSE_PROMPT.format(lines=lines), max_tokens=4000)
+            for d in _results(data):
                 by_sku[str(d.get("sku"))] = d
-            log.info(
-                "Groq parse chunk %d/%d SUCCESS — parsed %d/%d items",
-                chunk_idx, total_chunks, len(parsed), len(chunk),
-            )
         except Exception:
             failed_chunks += 1
-            log.exception(
-                "Groq parse chunk %d/%d FAILED — SKUs %s",
-                chunk_idx, total_chunks, ", ".join(skus),
-            )
-
-    enriched = 0
+            skus = ", ".join(i.schein_sku for i in chunk)
+            log.exception("Groq parse chunk %d/%d FAILED — SKUs %s",
+                          chunk_idx, total_chunks, skus)
+    if failed_chunks == total_chunks and items:
+        raise RuntimeError("Groq parsing failed for all chunks — check GROQ_API_KEY and rate limits")
     for it in items:
         d = by_sku.get(it.schein_sku, {})
-        if not d:
-            log.warning("Groq parse: no data returned for SKU %s — using raw description", it.schein_sku)
-            it.search_query = it.description
-            continue
         it.brand = d.get("brand")
         it.product_name = d.get("product_name") or it.description
         it.size_form = d.get("size_form")
@@ -200,17 +177,7 @@ def parse_items_batch(items: List[OrderLineItem], chunk_size: int = 12) -> List[
             except (TypeError, ValueError):
                 pass
         it.search_query = d.get("search_query") or it.description
-        enriched += 1
-        log.debug(
-            "SKU %s enriched — brand=%s query=%r",
-            it.schein_sku, it.brand, it.search_query,
-        )
-
-    if failed_chunks:
-        log.error("Groq parse finished with %d/%d chunk(s) FAILED (%d/%d items enriched)",
-                  failed_chunks, total_chunks, enriched, len(items))
-    else:
-        log.info("Groq parse finished OK — %d/%d items enriched", enriched, len(items))
+        it.generic_query = d.get("generic_query") or None
     return items
 
 
@@ -241,6 +208,13 @@ Rules:
   is for a larger pack/case, set pack_condition text accordingly.
 - confidence: integer 0-100 reflecting how certain YOU are in the verdict,
   based on evidence quality. Do not default; vary it with the evidence.
+- If the reference product has no identifiable brand (generic/house item,
+  Brand is null), set brand_match=true when the candidate is the same generic
+  product type.
+- Marketing-name variations of the SAME product line are NOT a name mismatch
+  (e.g. "Luxatemp Plus" vs "Luxatemp Automix Plus", "Glide" vs "Glide
+  Pro-Health") when the MPN, specs, or variant confirm the same product.
+- CONSISTENCY: match_type may be "exact" ONLY when all four booleans are true.
 
 Return ONLY a JSON object: {{"results": [...]}}, same order as candidates,
 objects with keys: idx (int, echo), match_type, confidence, brand_match,
@@ -254,31 +228,24 @@ Candidates:
 
 def validate_candidates(item: OrderLineItem, cands: List[PriceCandidate]) -> List[PriceCandidate]:
     if not cands:
-        log.info("SKU %s — Groq validate: no candidates to validate", item.schein_sku)
         return cands
-    log.info(
-        "SKU %s — Groq validate: %d candidate(s) for %r",
-        item.schein_sku, len(cands), item.product_name or item.description[:40],
-    )
-    blob = "\n".join(
-        json.dumps({
-            "idx": i, "title": c.title, "url": c.url, "site": c.source_site,
-            "price": c.price, "scraped_product_name": c.scraped_product_name,
-            "scraped_variant": c.scraped_variant, "pack_qty": c.pack_qty,
-        }) for i, c in enumerate(cands)
-    )
     try:
+        blob = "\n".join(
+            json.dumps({
+                "idx": i, "title": c.title, "url": c.url, "site": c.source_site,
+                "price": c.price, "scraped_product_name": c.scraped_product_name,
+                "scraped_variant": c.scraped_variant, "pack_qty": c.pack_qty,
+            }) for i, c in enumerate(cands)
+        )
         data = _ask_json(VALIDATE_PROMPT.format(
             brand=item.brand, product_name=item.product_name,
             size_form=item.size_form, variant=item.variant,
             pack_qty=item.pack_qty, description=item.description,
             candidates=blob,
-        ), max_tokens=3000, label=f"Groq-validate SKU {item.schein_sku}")
+        ), max_tokens=3000)
     except Exception:
-        log.exception("SKU %s — Groq validate FAILED", item.schein_sku)
+        log.exception("Groq validate FAILED for SKU %s", item.schein_sku)
         return cands
-
-    validated = 0
     for d in _results(data):
         try:
             c = cands[int(d["idx"])]
@@ -292,12 +259,6 @@ def validate_candidates(item: OrderLineItem, cands: List[PriceCandidate]) -> Lis
         c.notes = d.get("notes")
         if c.match_type == "rejected":
             c.rejected_reason = c.notes
-        validated += 1
-        log.info(
-            "SKU %s — candidate %s: %s (confidence=%d) %s",
-            item.schein_sku, c.source_site, c.match_type, c.confidence, c.url[:80],
-        )
-    log.info("SKU %s — Groq validate SUCCESS (%d/%d verdicts)", item.schein_sku, validated, len(cands))
     return cands
 
 
@@ -322,20 +283,14 @@ Return ONLY a JSON object:
 
 def evaluate_equivalency(item: OrderLineItem, equivalent_name: str,
                          note: str, market_summary: str) -> dict:
-    log.info(
-        "SKU %s — Groq equivalency: %r vs %r",
-        item.schein_sku, item.description[:40], equivalent_name[:40],
-    )
     try:
-        result = _ask_json(EQUIV_PROMPT.format(
+        return _ask_json(EQUIV_PROMPT.format(
             description=item.description, brand=item.brand, pack_qty=item.pack_qty,
             equivalent=equivalent_name, note=note or "", market=market_summary or "none",
-        ), max_tokens=400, label=f"Groq-equiv SKU {item.schein_sku}")
-        log.info(
-            "SKU %s — Groq equivalency SUCCESS: %s",
-            item.schein_sku, result.get("confidence_level", "?"),
-        )
-        return result
+        ), max_tokens=400)
     except Exception:
-        log.exception("SKU %s — Groq equivalency FAILED", item.schein_sku)
-        return {"confidence_level": "possible_alternative", "basis": "Groq evaluation failed — manual review required"}
+        log.exception("Groq equivalency FAILED for SKU %s", item.schein_sku)
+        return {
+            "confidence_level": "possible_alternative",
+            "basis": "Groq evaluation failed — manual review required",
+        }

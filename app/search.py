@@ -1,19 +1,24 @@
 """Market sweep and page verification.
 
-- SerpAPI (google_shopping + google organic) performs the broad public-web
-  sweep. No hardcoded supplier list — the whole web is searched (Issue 5
-  fixed: real searches, real URLs, real prices).
-- Firecrawl scrapes each candidate product page with full JS rendering and
-  returns structured JSON (price, pack qty, product name, variant, stock).
-  This satisfies the PRD's headless-browser requirement (PRD 4.3) without
-  self-managed Playwright.
+- SerpAPI (google_shopping + google organic + PAID ADS) performs the broad
+  public-web sweep. No hardcoded supplier list (Issue 5 fixed).
+- Firecrawl scrapes each candidate product page with full JS rendering
+  (satisfies PRD 4.3 without self-managed Playwright).
 
-Filtering rules:
-- Excluded domains (henryschein, ebay, amazon, marketplaces, search engines)
-  come from config/excluded_domains.txt — client-editable, no code changes.
-- PDF / document links are dropped.
-- Taxonomy/category/search URLs are dropped: only product detail pages may
-  become price candidates.
+v3 changes:
+1. MULTI-QUERY: each item sweeps with its brand query AND a generic query
+   (brand stripped) produced by the AI parse step — essential for Henry
+   Schein house brands (Acclean, Maxima, Criterion…) that no other supplier
+   sells under that name.
+2. ADS INGESTION: SerpAPI `ads` and `inline_shopping_results` arrays are now
+   read alongside organic/shopping, and gclid/utm/srsltid tracking params are
+   stripped (canonical URLs) before dedupe and scraping.
+3. DEEPER, FAIRER SHORTLIST: max_candidates 8→14, ≤2 candidates per domain,
+   and up to 3 slots reserved for dental-supplier-looking domains whose
+   snippet had no price (Firecrawl confirms price on-page anyway).
+
+Filtering rules unchanged: excluded domains (client-editable config), .pdf /
+document links, and taxonomy/category/search URLs never become candidates.
 """
 from __future__ import annotations
 import logging
@@ -21,7 +26,7 @@ import os
 import re
 from pathlib import Path
 from typing import List, Optional
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, quote_plus, urlencode, urlparse, urlunparse
 
 import requests
 
@@ -34,12 +39,26 @@ FIRECRAWL_KEY = os.environ.get("FIRECRAWL_API_KEY", "")
 CONFIG_DIR = Path(os.environ.get("CONFIG_DIR", Path(__file__).resolve().parent.parent / "config"))
 
 PRICE_RE = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)")
-# URL path fragments that indicate a category/taxonomy/search page, not a product
 CATEGORY_PATH_RE = re.compile(
     r"/(category|categories|collections?|catalog|search|shop|browse|brands?|c|s|tag|filter)(/|$|\?)",
     re.I,
 )
 DOC_EXT_RE = re.compile(r"\.(pdf|docx?|xlsx?|pptx?|zip)(\?|$)", re.I)
+
+# Tracking params stripped before dedupe/scraping (gclid etc. = paid-ad clickthroughs)
+TRACKING_KEYS = {"gclid", "gbraid", "wbraid", "gclsrc", "dclid", "msclkid",
+                 "fbclid", "srsltid", "gad_source", "gad_campaignid"}
+TRACKING_PREFIXES = ("utm_", "hsa_", "gad_")
+
+# Heuristic for "looks like a dental supplier" — used only to reserve
+# shortlist slots for price-less snippets worth verifying on-page.
+KNOWN_SUPPLIERS = {
+    "net32.com", "pricenex.com", "supplyclinic.com", "safcodental.com",
+    "frontierdental.com", "curio.dental", "tdsc.com", "crazydentalprices.com",
+    "dentalcity.com", "scottsdental.com", "darbydental.com", "medexsupply.com",
+    "mvpdentalsupply.com", "ddsdentalsupplies.com", "thedentalmarket.net",
+    "skydentalsupply.com", "ansondental.com", "amtouch.com", "zoro.com",
+}
 
 
 def load_excluded_domains() -> List[str]:
@@ -64,17 +83,34 @@ def _domain(url: str) -> str:
         return ""
 
 
+def canonical_url(url: str) -> str:
+    """Strip ad/tracking parameters so paid-ad clickthrough URLs dedupe and
+    scrape as their real product page."""
+    if not url:
+        return url
+    try:
+        p = urlparse(url)
+        q = [(k, v) for k, v in parse_qsl(p.query, keep_blank_values=True)
+             if k.lower() not in TRACKING_KEYS
+             and not k.lower().startswith(TRACKING_PREFIXES)]
+        return urlunparse(p._replace(query=urlencode(q, doseq=True), fragment=""))
+    except Exception:
+        return url
+
+
 def is_excluded(url: str) -> bool:
     d = _domain(url)
     return any(d == ex or d.endswith("." + ex) for ex in EXCLUDED)
 
 
 def is_category_url(url: str) -> bool:
-    """Taxonomy/category/search URLs must never surface as product matches."""
     path = urlparse(url).path or "/"
     if path in ("", "/"):
         return True
     if CATEGORY_PATH_RE.search(path):
+        return True
+    # net32-style taxonomy slugs (…-t-515-614) are listing pages, not products
+    if re.search(r"-t-\d+(?:-\d+)*/?$", path):
         return True
     if "?q=" in url or "search" in (urlparse(url).query or "").lower():
         return True
@@ -83,6 +119,10 @@ def is_category_url(url: str) -> bool:
 
 def usable(url: str) -> bool:
     return bool(url) and not is_excluded(url) and not DOC_EXT_RE.search(url) and not is_category_url(url)
+
+
+def _looks_supplier(domain: str) -> bool:
+    return domain in KNOWN_SUPPLIERS or "dent" in domain
 
 
 def _parse_price(s) -> Optional[float]:
@@ -103,87 +143,107 @@ def _serpapi(params: dict) -> dict:
     return r.json()
 
 
-def market_sweep(item: OrderLineItem, max_candidates: int = 8) -> tuple[List[PriceCandidate], List[str]]:
-    """Broad public sweep: Google Shopping first, organic as backfill.
+def _item_queries(item: OrderLineItem) -> List[str]:
+    """Brand query + generic (brand-stripped) query from the AI parse step."""
+    queries = []
+    for q in (item.search_query or item.description, getattr(item, "generic_query", None)):
+        q = (q or "").strip()
+        if q and q.lower() not in (x.lower() for x in queries):
+            queries.append(q)
+    return queries
 
-    Returns (candidates, flagged_sites). Runs on EVERY item EVERY run
-    (PRD 4.2 — never skipped).
-    """
-    query = item.search_query or item.description
-    log.info(
-        "SKU %s — market sweep starting (query=%r)",
-        item.schein_sku, query[:120],
-    )
+
+def _collect(results: list, source_hint: str, cands: list, seen: set,
+             price_keys=("extracted_price", "price")) -> int:
+    added = 0
+    for r in results or []:
+        url = canonical_url(r.get("product_link") or r.get("link")
+                            or r.get("tracking_link") or "")
+        if "google.com" in _domain(url) and r.get("link"):
+            url = canonical_url(r["link"])
+        if not usable(url) or url in seen:
+            continue
+        seen.add(url)
+        price = None
+        for k in price_keys:
+            price = _parse_price(r.get(k))
+            if price:
+                break
+        if price is None:
+            price = _parse_price(r.get("snippet", ""))
+        cands.append(PriceCandidate(
+            title=r.get("title", ""),
+            url=url,
+            source_site=r.get("source") or _domain(url),
+            price=price,
+        ))
+        added += 1
+    return added
+
+
+def _shortlist(cands: List[PriceCandidate], max_candidates: int) -> List[PriceCandidate]:
+    """≤2 per domain; priced cheapest-first; up to 3 reserved slots for
+    price-less snippets on dental-supplier domains (verified on-page later)."""
+    by_dom: dict[str, int] = {}
+    capped: List[PriceCandidate] = []
+    for c in sorted(cands, key=lambda c: (c.price is None, c.price or 0)):
+        d = _domain(c.url)
+        if by_dom.get(d, 0) >= 2:
+            continue
+        by_dom[d] = by_dom.get(d, 0) + 1
+        capped.append(c)
+    priced = [c for c in capped if c.price is not None]
+    reserve = [c for c in capped
+               if c.price is None and _looks_supplier(_domain(c.url))][:3]
+    out = priced[:max(0, max_candidates - len(reserve))] + reserve
+    return out[:max_candidates]
+
+
+def market_sweep(item: OrderLineItem, max_candidates: int = 14) -> tuple[List[PriceCandidate], List[str]]:
+    """Broad public sweep. Runs on EVERY item EVERY run (PRD 4.2)."""
+    queries = _item_queries(item)
+    log.info("SKU %s — market sweep starting (%d quer%s: %s)",
+             item.schein_sku, len(queries), "y" if len(queries) == 1 else "ies",
+             " | ".join(q[:60] for q in queries))
     cands: List[PriceCandidate] = []
     flagged: List[str] = []
-    seen_urls: set[str] = set()
-    shopping_count = 0
-    organic_count = 0
+    seen: set[str] = set()
 
-    # 1. Google Shopping — structured prices
     if not SERPAPI_KEY:
-        log.warning("SKU %s — SerpAPI key missing; shopping sweep skipped", item.schein_sku)
-    else:
-        try:
-            log.info("SKU %s — SerpAPI google_shopping …", item.schein_sku)
-            data = _serpapi({"engine": "google_shopping", "q": query, "gl": "us", "hl": "en", "num": 40})
-            for r in data.get("shopping_results", []):
-                url = r.get("product_link") or r.get("link") or ""
-                # prefer direct merchant link when SerpAPI provides it
-                if "google.com" in _domain(url) and r.get("link"):
-                    url = r["link"]
-                if not usable(url) or url in seen_urls:
-                    continue
-                seen_urls.add(url)
-                shopping_count += 1
-                cands.append(PriceCandidate(
-                    title=r.get("title", ""),
-                    url=url,
-                    source_site=r.get("source") or _domain(url),
-                    price=_parse_price(r.get("extracted_price") or r.get("price")),
-                ))
-            log.info(
-                "SKU %s — google_shopping: %d usable result(s)",
-                item.schein_sku, shopping_count,
-            )
-        except Exception as e:
-            log.error("SKU %s — google_shopping sweep FAILED: %s", item.schein_sku, e)
+        log.warning("SKU %s — SerpAPI key missing; sweep skipped", item.schein_sku)
+        return [], flagged
 
-    # 2. Organic backfill — catches dental suppliers without shopping feeds
-    if SERPAPI_KEY:
+    for qi, query in enumerate(queries, start=1):
+        # 1. Google Shopping — structured prices
         try:
-            log.info("SKU %s — SerpAPI google organic backfill …", item.schein_sku)
-            data = _serpapi({"engine": "google", "q": f"{query} price buy", "gl": "us", "hl": "en", "num": 20})
-            for r in data.get("organic_results", []):
-                url = r.get("link", "")
-                if not usable(url) or url in seen_urls:
-                    continue
-                seen_urls.add(url)
-                organic_count += 1
-                cands.append(PriceCandidate(
-                    title=r.get("title", ""),
-                    url=url,
-                    source_site=_domain(url),
-                    price=_parse_price(r.get("snippet", "")),  # provisional; Firecrawl confirms
-                ))
-            log.info(
-                "SKU %s — organic backfill: %d usable result(s)",
-                item.schein_sku, organic_count,
-            )
+            data = _serpapi({"engine": "google_shopping", "q": query,
+                             "gl": "us", "hl": "en", "num": 40})
+            n = _collect(data.get("shopping_results"), "shopping", cands, seen)
+            n += _collect(data.get("shopping_ads"), "shopping_ads", cands, seen)
+            log.info("SKU %s — q%d google_shopping: %d usable result(s)",
+                     item.schein_sku, qi, n)
         except Exception as e:
-            log.error("SKU %s — organic sweep FAILED: %s", item.schein_sku, e)
+            log.error("SKU %s — q%d google_shopping FAILED: %s", item.schein_sku, qi, e)
 
-    # Cheapest-first, keep a shortlist for verification
-    cands.sort(key=lambda c: (c.price is None, c.price or 0))
-    shortlist = cands[:max_candidates]
+        # 2. Google organic + PAID ADS + inline shopping ads
+        try:
+            data = _serpapi({"engine": "google", "q": f"{query} price buy",
+                             "gl": "us", "hl": "en", "num": 20})
+            n = _collect(data.get("organic_results"), "organic", cands, seen)
+            n += _collect(data.get("ads"), "ads", cands, seen)
+            n += _collect(data.get("inline_shopping_results"), "inline_ads", cands, seen)
+            log.info("SKU %s — q%d organic+ads: %d usable result(s)",
+                     item.schein_sku, qi, n)
+        except Exception as e:
+            log.error("SKU %s — q%d organic/ads FAILED: %s", item.schein_sku, qi, e)
+
+    shortlist = _shortlist(cands, max_candidates)
     if shortlist:
-        log.info(
-            "SKU %s — market sweep done: %d candidate(s) shortlisted (cheapest=$%s at %s)",
-            item.schein_sku, len(shortlist),
-            shortlist[0].price, shortlist[0].source_site,
-        )
+        log.info("SKU %s — sweep done: %d/%d shortlisted (cheapest=$%s at %s)",
+                 item.schein_sku, len(shortlist), len(cands),
+                 shortlist[0].price, shortlist[0].source_site)
     else:
-        log.warning("SKU %s — market sweep done: no candidates found", item.schein_sku)
+        log.warning("SKU %s — sweep done: no candidates found", item.schein_sku)
     return shortlist, flagged
 
 
@@ -206,10 +266,7 @@ FIRECRAWL_SCHEMA = {
 
 def firecrawl_verify(c: PriceCandidate, sku: str = "") -> PriceCandidate:
     """Render the candidate page (JS executed) and extract authoritative data.
-
-    The scraped page is the source of truth — if it disagrees with the search
-    result title (wrong shade, wrong pack), the scraped values win.
-    """
+    The scraped page is the source of truth over the search-result title."""
     tag = f"SKU {sku} — " if sku else ""
     if not FIRECRAWL_KEY:
         log.warning("%sFirecrawl key missing; skipping scrape of %s", tag, c.url[:80])
@@ -225,7 +282,7 @@ def firecrawl_verify(c: PriceCandidate, sku: str = "") -> PriceCandidate:
                 "url": c.url,
                 "formats": [{"type": "json", "schema": FIRECRAWL_SCHEMA}],
                 "onlyMainContent": True,
-                "waitFor": 3000,            # let JS pricing render
+                "waitFor": 3000,
                 "timeout": 45000,
             },
             timeout=70,
@@ -248,16 +305,13 @@ def firecrawl_verify(c: PriceCandidate, sku: str = "") -> PriceCandidate:
     c.scraped_variant = extracted.get("variant")
     verified_price = _parse_price(extracted.get("price"))
     if verified_price:
-        c.price = verified_price            # page price overrides search snippet
+        c.price = verified_price
     if extracted.get("pack_quantity"):
         c.pack_qty = int(extracted["pack_quantity"])
     if extracted.get("in_stock") is not None:
         c.in_stock = bool(extracted["in_stock"])
     if extracted.get("minimum_order_condition"):
         c.pack_condition = extracted["minimum_order_condition"]
-    log.info(
-        "%sscrape SUCCESS — price=$%s pack=%s product=%r",
-        tag, c.price, c.pack_qty,
-        (c.scraped_product_name or c.title)[:60],
-    )
+    log.info("%sscrape SUCCESS — price=$%s pack=%s product=%r",
+             tag, c.price, c.pack_qty, (c.scraped_product_name or c.title)[:60])
     return c
