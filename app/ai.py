@@ -433,17 +433,18 @@ extract the data for the SPECIFIC product/variant that page is about. Critical
 rules for accuracy:
 - price: the price the buyer would ACTUALLY PAY TODAY for ONE unit of the EXACT
   variant/pack the page is selling. Apply these rules in order:
-  1. SALE/DISCOUNT: if the page shows both an original and a discounted price
-     (e.g. struck-through "$280" with "$241", or "Was $280 Now $241", or
-     "Sale: $241"), use the CURRENT/SALE/NOW price ($241), never the original.
-     In markdown a struck-through original may appear as "~~$280~~" or just as a
-     higher number next to the lower one — the lower current price is the answer.
+  1. SALE/DISCOUNT: if the page shows both an original (higher) and a discounted
+     (lower) price (e.g. a struck-through original next to a sale price, or "Was
+     <high> Now <low>", or "Sale: <low>"), use the CURRENT/SALE/NOW (lower)
+     price, never the original. In markdown a struck-through original may appear
+     as a higher number next to the lower one — the lower current price is the
+     answer. Read the ACTUAL numbers off THIS page; never invent one.
   2. EXACT OPTION: if the page lists multiple variants/pack sizes, use the price
      of the option matching the page's own title/URL — NEVER the default,
      lowest, or per-unit price of a DIFFERENT option.
-  3. QUANTITY BREAKS: if the page shows tiered/bulk pricing (e.g. "1+: $241,
-     4+: $230, buy 4 get 1 free"), use the BASE single-pack price ($241), not
-     the bulk-discounted tier — unless the bulk price is the only one shown.
+  3. QUANTITY BREAKS: if the page shows tiered/bulk pricing, use the BASE
+     single-pack price, not the bulk-discounted tier — unless the bulk price is
+     the only one shown.
   4. TOTAL not per-unit: return the price for the whole pack as sold (the
      pack_quantity below), never the "$/each" unit price of a larger pack.
   null if no public price is shown.
@@ -485,16 +486,21 @@ Below are scraped pages (markdown), each with an index. For EACH page do BOTH:
 STEP 1 — EXTRACT (read the page):
 - price: the price the buyer would ACTUALLY PAY TODAY for ONE unit of the EXACT
   variant/pack the page sells. Rules in order:
-  1. SALE/DISCOUNT: if both an original and discounted price show (struck-through
-     "~~$280~~" with "$241", "Was $280 Now $241", "Sale $241"), use the CURRENT/
-     SALE price ($241), never the original.
+  1. SALE/DISCOUNT: if both an original (higher) and a discounted (lower) price
+     are shown — e.g. a struck-through original next to a sale price, or "Was
+     <high> Now <low>", or "Sale <low>" — use the CURRENT/SALE (lower) price,
+     never the original. Read the ACTUAL numbers off THIS page; never invent a
+     price or reuse a number from these instructions.
   2. EXACT OPTION: if multiple variants/packs are listed, use the price of the
      option matching the page's own title/URL — never a different option's.
   3. QUANTITY BREAKS: use the base single-pack price, not a bulk tier, unless the
      bulk price is the only one shown.
   4. TOTAL not per-unit: the whole-pack price, not "$/each".
+  5. If you cannot find a clear price for THIS product on the page, return null —
+     do NOT guess and do NOT copy a number from another product or from these
+     instructions.
   null if no public price is shown.
-- original_price: higher pre-discount price if shown, else null.
+- original_price: the higher pre-discount price if one is actually shown, else null.
 - pack_quantity: units per pack/box as sold (integer), else null.
 - variant: the shade/color/flavor/size this page sells.
 - product_name: the product title on the page.
@@ -625,10 +631,21 @@ def _apply_ev_result(item, c, d):
     else:
         vp = None
     if vp:
-        if c.price and abs(vp - c.price) / max(c.price, 0.01) > 0.4:
-            c.notes = ((c.notes + " · ") if c.notes else "") + (
-                f"page price ${vp} differs sharply from listing ${c.price} — verify")
+        # Sanity cross-check: the search-snippet price (c.price, from discovery)
+        # is an INDEPENDENT signal. If the AI's page price diverges wildly from
+        # it, ONE of them is wrong (AI grabbed a banner/related-item price, or
+        # the snippet was stale) — we can't tell which, so we keep the page price
+        # for display but mark the candidate UNRELIABLE so it can't headline as a
+        # trusted "best price" and is clearly flagged for manual verification.
+        snippet = c.price if (c.price and c.price > 0) else None
         c.price = vp
+        if snippet:
+            ratio = vp / snippet
+            if ratio > 1.8 or ratio < 0.55:
+                c.price_unreliable = True
+                c.notes = ((c.notes + " · ") if c.notes else "") + (
+                    f"PRICE UNRELIABLE — AI page price ${vp:.2f} vs listing "
+                    f"${snippet:.2f} ({ratio:.1f}×); one is wrong, VERIFY MANUALLY")
     op = d.get("original_price")
     if isinstance(op, str):
         _m = re.search(r"\d+(?:\.\d+)?", op.replace(",", "").replace("$", ""))

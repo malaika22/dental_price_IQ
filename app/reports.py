@@ -420,6 +420,15 @@ def write_price_match_report(order: ParsedOrder, results: List[ItemResult],
             per_unit = round(r.item.unit_price - c.price, 2)
             total = round(per_unit * r.item.qty, 2)
             pct = _savings_pct(per_unit, r.item.unit_price)
+            # explicit flags the client must see at a glance
+            flags = []
+            if c.price >= r.item.unit_price:
+                flags.append(f"⚠ NO SAVING — ${c.price:,.2f} is HIGHER than Schein "
+                             f"${r.item.unit_price:,.2f}; shown as closest match only")
+            if getattr(c, "price_unreliable", False):
+                flags.append("⚠ PRICE UNRELIABLE — auto-extracted price conflicts with "
+                             "the listing; confirm on the page before using")
+            flag_prefix = (" · ".join(flags) + " · ") if flags else ""
             if getattr(c, "is_generic_equivalent", False):
                 reason = ("GENERIC EQUIVALENT — same product type, different/no brand; "
                           "no competitor sells the exact Schein house-brand item. "
@@ -448,6 +457,8 @@ def write_price_match_report(order: ParsedOrder, results: List[ItemResult],
                 if note:
                     parts.append(note)
                 reason = " · ".join(parts) or "Not exact — could not confirm all four criteria"
+
+            reason = flag_prefix + reason   # prepend ⚠ NO SAVING / PRICE UNRELIABLE flags
 
             if n == 1:
                 ws.append([r.item.schein_sku, _dash(r.item.mpn), r.item.description,
@@ -529,7 +540,7 @@ def write_alternate_purchase_list(order: ParsedOrder,
         sentence = _TIER["exact"][1] if label == "EXACT" else _TIER["approximate"][1]
         basis = sentence + "\nEquivalency table (client-maintained) · " + (f.basis or "")
         per_unit = round(f.item.unit_price - f.price, 2) if f.price else None
-        pct = per_unit / f.item.unit_price * 100 if per_unit is not None else None
+        pct = _savings_pct(per_unit, f.item.unit_price) if per_unit is not None else None
         savings = (per_unit if per_unit and per_unit > 0
                    else (f"Equiv ${f.price:,.2f} > Schein ${f.item.unit_price:,.2f}"
                          if f.price else "—"))
