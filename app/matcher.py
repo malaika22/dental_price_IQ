@@ -32,7 +32,19 @@ def normalize_volume_ml(text: str) -> Optional[float]:
     return float(m.group(1)) * _ML.get(unit, 1.0)
 
 
+def _coerce_price(c: PriceCandidate) -> None:
+    """Guarantee c.price is float or None. Snippet prices and some extraction
+    paths can leave a string here; comparing str to number would 500."""
+    if c.price is None or isinstance(c.price, (int, float)):
+        return
+    import re as _re
+    s = str(c.price).replace(",", "").replace("$", "").strip()
+    m = _re.search(r"\d+(?:\.\d+)?", s)
+    c.price = float(m.group(0)) if m else None
+
+
 def price_sane(item: OrderLineItem, c: PriceCandidate) -> bool:
+    _coerce_price(c)
     """Reject obviously-wrong extractions (dimension-like numbers, unit-price
     of a single piece vs a 100-pack, etc.)."""
     if c.price is None or c.price <= 0:
@@ -52,7 +64,7 @@ def pack_compatible(item: OrderLineItem, c: PriceCandidate) -> Optional[bool]:
 def volume_compatible(item: OrderLineItem, c: PriceCandidate) -> Optional[bool]:
     a = normalize_volume_ml(item.description)
     b = normalize_volume_ml((c.scraped_product_name or "") + " " + (c.title or ""))
-    if a is None or b is None or a <= 0:
+    if a is None or b is None:
         return None
     return abs(a - b) / a <= 0.02
 
@@ -94,44 +106,56 @@ def process_item(item: OrderLineItem, max_verify: int = 8) -> ItemResult:
     cands, flagged = search.market_sweep(item)
     result.flagged_sites = flagged
 
-    # verify the most promising candidates on-page (JS rendered)
+    # verify the most promising candidates on-page (JS rendered). Batched Groq
+    # extraction means prices aren't known mid-loop, so instead of a dynamic
+    # early-stop we cap scrapes per item (cheapest-first shortlist preserves the
+    # lowest-priced candidates). SCRAPE_CAP_PER_ITEM bounds Firecrawl cost.
+    import os as _os
+    scrape_cap = int(_os.environ.get("SCRAPE_CAP_PER_ITEM", str(max_verify)))
     verified: List[PriceCandidate] = []
     exacts_found = 0
     verified_ok = 0
+    scraped_n = 0
     for c in cands:
-        # early stop: once 2 verified exacts + 4 verified candidates exist,
-        # skip remaining PRICED candidates — the shortlist is cheapest-first,
-        # so they are provably more expensive than what's already verified.
-        # Price-UNKNOWN candidates (reserve slots) are always scraped: one of
-        # them could be the true lowest price, invisible until the page is read.
-        if exacts_found >= 2 and verified_ok >= 4 and c.price is not None:
-            c.notes = c.notes or "not scraped — enough verified candidates found"
+        if scraped_n >= scrape_cap:
+            c.notes = c.notes or "not scraped — per-item scrape cap reached"
             result.candidates.append(c)
             continue
-        if len([v for v in verified if v.match_type != "rejected"]) >= max_verify:
-            result.candidates.append(c)       # unverified leftovers -> evidence
-            continue
         c._ordered_variant = item.variant or ""
-        c = search.firecrawl_verify(c)
-        # deterministic demotions before AI sees them
-        if c.match_type != "rejected":
-            if not price_sane(item, c):
-                c.match_type = "rejected"
-                c.rejected_reason = (c.rejected_reason or
-                                     f"price {c.price} failed sanity vs Schein unit {item.unit_price}")
-            elif pack_compatible(item, c) is False and c.pack_condition is None:
-                c.pack_condition = f"{c.pack_qty}-pack price (ordered pack: {item.pack_qty})"
-            elif volume_compatible(item, c) is False:
-                c.match_type = "rejected"
-                c.rejected_reason = "volume/size mismatch after normalization"
+        c = search.firecrawl_verify(c, sku=sku)   # markdown scrape (1 credit); no price yet
+        scraped_n += 1
+        verified.append(c)
+
+    # ONE Groq call per item that BOTH extracts pricing AND judges match criteria
+    # (was two calls: extract_pages_batch + validate_candidates). Halves Groq
+    # request volume for free-tier rate-limit relief; same inputs → same outputs.
+    ai.extract_and_validate_batch(item, verified)
+
+    # NO-AI SAFETY NET: if Groq was rate-limited/exhausted and left some scraped
+    # pages unprocessed, pull their price straight from the markdown (regex,
+    # flagged UNVERIFIED) so the report shows a price instead of nothing.
+    ai.manual_extract_fallback(item, verified)
+
+    # deterministic demotions run AFTER the combined call (price/pack populated).
+    # These OVERRIDE the AI verdict: a price-insane or volume-mismatched candidate
+    # is rejected even if the model called it exact.
+    for c in verified:
+        if c.match_type == "rejected":
+            continue
+        if not price_sane(item, c):
+            c.match_type = "rejected"
+            c.rejected_reason = (c.rejected_reason or
+                                 f"price {c.price} failed sanity vs Schein unit {item.unit_price}")
+        elif pack_compatible(item, c) is False and c.pack_condition is None:
+            c.pack_condition = f"{c.pack_qty}-pack price (ordered pack: {item.pack_qty})"
+        elif volume_compatible(item, c) is False:
+            c.match_type = "rejected"
+            c.rejected_reason = "volume/size mismatch after normalization"
         if c.scraped_product_name is not None:
             verified_ok += 1
             if _likely_exact(item, c):
                 exacts_found += 1
-        verified.append(c)
 
-    to_validate = [c for c in verified if c.match_type != "rejected"]
-    ai.validate_candidates(item, to_validate)
     # consistency guard: Groq may not call something exact its own criteria deny
     for c in verified:
         if c.match_type == "exact" and c.criteria and not _effective_exact(item, c):
@@ -213,7 +237,7 @@ def run_equivalency(result: ItemResult, entries: List[EquivalencyEntry]) -> Opti
     cands, _ = search.market_sweep(probe, max_candidates=4)
     best = None
     for c in cands[:3]:
-        c = search.firecrawl_verify(c)
+        c = search.firecrawl_verify(c, sku=item.schein_sku)
         if c.price and (best is None or c.price < best.price):
             best = c
 

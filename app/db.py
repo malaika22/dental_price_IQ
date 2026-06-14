@@ -45,6 +45,14 @@ CREATE TABLE IF NOT EXISTS discovery_cache (
     urls_json TEXT,
     discovered_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+-- Scrape cache: stores the scraped markdown per URL so a re-run (after a
+-- freeze/crash, or a repeat order) skips re-scraping pages already fetched —
+-- the single biggest Firecrawl credit saver. Short TTL keeps prices fresh.
+CREATE TABLE IF NOT EXISTS scrape_cache (
+    url TEXT PRIMARY KEY,
+    markdown TEXT,
+    scraped_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 -- Stage 3 (order generation) — schema reserved, unused in Stage 1+2
 CREATE TABLE IF NOT EXISTS order_history (
     id INTEGER PRIMARY KEY,
@@ -142,3 +150,81 @@ def save_discovery(conn, schein_sku: str, urls: list) -> None:
         " VALUES (?,?,datetime('now'))",
         (schein_sku, json.dumps(list(urls)[:40])))
     conn.commit()
+
+
+# ------------------------------------------------------- scrape cache -------
+# Thread-safe across the pipeline's worker threads: each call opens its own
+# short-lived SQLite connection (SQLite handles concurrent writers via its
+# file lock; write volume here is low). This is what makes a re-run after a
+# freeze cheap — already-scraped pages are read from disk, not re-fetched.
+
+import threading as _threading
+_scrape_lock = _threading.Lock()
+_SCRAPE_DB_PATH = {"p": "dental_intel.sqlite3"}
+
+
+def set_scrape_db_path(path) -> None:
+    _SCRAPE_DB_PATH["p"] = str(path)
+
+
+def get_cached_scrape(url: str, max_age_hours: int = 24) -> str | None:
+    """Return cached markdown for a URL if scraped within max_age_hours, else
+    None. Lets a re-run skip re-scraping pages already fetched this/last run."""
+    if not url:
+        return None
+    try:
+        with _scrape_lock:
+            c = sqlite3.connect(_SCRAPE_DB_PATH["p"], timeout=10)
+            try:
+                cur = c.execute(
+                    "SELECT markdown FROM scrape_cache WHERE url=? AND "
+                    "scraped_at >= datetime('now', ?)",
+                    (url, f"-{int(max_age_hours)} hours"))
+                row = cur.fetchone()
+            finally:
+                c.close()
+        if row and row[0]:
+            return row[0]
+    except Exception:
+        pass
+    return None
+
+
+def save_scrape(url: str, markdown: str) -> None:
+    """Persist scraped markdown for a URL (refreshes timestamp). Called as soon
+    as each scrape succeeds, so a freeze/crash never loses fetched pages."""
+    if not url or not markdown:
+        return
+    try:
+        with _scrape_lock:
+            c = sqlite3.connect(_SCRAPE_DB_PATH["p"], timeout=10)
+            try:
+                c.execute(
+                    "INSERT OR REPLACE INTO scrape_cache(url, markdown, scraped_at)"
+                    " VALUES (?,?,datetime('now'))", (url, markdown))
+                c.commit()
+            finally:
+                c.close()
+    except Exception:
+        pass
+
+
+def save_discovery_now(schein_sku: str, urls: list) -> None:
+    """Thread-safe immediate discovery save (own connection), so discovery URLs
+    are persisted as each item's sweep finishes — not held in memory until the
+    end of the run where a freeze would lose them."""
+    if not schein_sku or not urls:
+        return
+    try:
+        with _scrape_lock:
+            c = sqlite3.connect(_SCRAPE_DB_PATH["p"], timeout=10)
+            try:
+                c.execute(
+                    "INSERT OR REPLACE INTO discovery_cache(schein_sku, urls_json, discovered_at)"
+                    " VALUES (?,?,datetime('now'))",
+                    (schein_sku, json.dumps(list(urls)[:40])))
+                c.commit()
+            finally:
+                c.close()
+    except Exception:
+        pass

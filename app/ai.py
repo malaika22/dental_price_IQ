@@ -31,13 +31,27 @@ from .models import OrderLineItem, PriceCandidate
 
 log = logging.getLogger(__name__)
 
-_DEFAULT_MODELS = "llama-3.3-70b-versatile,llama-3.1-8b-instant,gemma2-9b-it"
+_DEFAULT_MODELS = "llama-3.3-70b-versatile,llama-3.1-8b-instant,openai/gpt-oss-20b"
 MODELS = [m.strip() for m in os.environ.get(
     "GROQ_MODELS", os.environ.get("GROQ_MODEL", _DEFAULT_MODELS)).split(",") if m.strip()]
 MODEL = MODELS[0]
 _model_idx = {"i": 0}
-MIN_INTERVAL = float(os.environ.get("GROQ_MIN_INTERVAL", "2.1"))  # ~28 req/min
+# Run-level circuit breaker: when the LAST model (no failover left) gets hard
+# rate-limited, every subsequent call would grind through MAX_RETRIES×60s of
+# backoff — and with split-retry that multiplies into 10-15min freezes on a
+# single item. Once tripped, calls fail fast for a short cooldown so the run
+# keeps moving (candidates stay unverified rather than the pipeline hanging).
+_groq_cb = {"tripped_until": 0.0}
+GROQ_CB_COOLDOWN = int(os.environ.get("GROQ_COOLDOWN", "90"))  # seconds to fail-fast after last-model wall
+GROQ_MAX_CYCLES = int(os.environ.get("GROQ_MAX_CYCLES", "3"))  # full passes through the model chain before giving up
+# Run-level circuit breaker: once set, the last model has been hard rate-limited
+# and every call grinding through 5×60s backoffs would freeze the run for many
+# minutes. After it trips, calls fail fast (short single wait, then raise) so the
+# pipeline finishes promptly with unverified candidates instead of hanging.
+_groq_exhausted = {"v": False, "until": 0.0}
+MIN_INTERVAL = float(os.environ.get("GROQ_MIN_INTERVAL", "2.6"))  # ~23 req/min, gentler on free-tier RPM
 MAX_RETRIES = 5
+MAX_BACKOFF = int(os.environ.get("GROQ_MAX_BACKOFF", "60"))  # hard cap on any single 429 wait (seconds)
 
 _client: Groq | None = None
 _lock = threading.Lock()
@@ -71,64 +85,125 @@ def _ask_json(prompt: str, max_tokens: int = 4000) -> dict:
     over to it (and remember that for the rest of the run). Only when every
     model is exhausted does the call raise."""
     last_err = None
+    # circuit breaker: if the last model was just hard-rate-limited, fail fast
+    # for a cooldown window instead of grinding 5×60s backoffs on every call
+    # (which, with split-retry, multiplied into 10-15min freezes per item).
+    if time.monotonic() < _groq_cb["tripped_until"]:
+        raise RuntimeError("Groq all-models rate-limited; failing fast to keep run moving")
     messages = [
         {"role": "system",
          "content": "You are a precise dental supply data engine. "
                     "Respond ONLY with valid JSON. No prose, no markdown."},
         {"role": "user", "content": prompt},
     ]
-    for mi in range(_model_idx["i"], len(MODELS)):
-        model = MODELS[mi]
-        rate_limited = False
-        for attempt in range(MAX_RETRIES):
-            _pace()
-            try:
-                resp = client().chat.completions.create(
-                    model=model, max_tokens=max_tokens, temperature=0,
-                    response_format={"type": "json_object"}, messages=messages,
-                )
-                text = resp.choices[0].message.content or ""
-                text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
+    # Cycle through the whole model chain up to GROQ_MAX_CYCLES times before
+    # giving up: after the last model rate-limits, loop BACK to the first (its
+    # per-minute window may have reset). Bounded so it can't spin forever.
+    for cycle in range(GROQ_MAX_CYCLES):
+        start_idx = _model_idx["i"] if cycle == 0 else 0
+        for mi in range(start_idx, len(MODELS)):
+            model = MODELS[mi]
+            rate_limited = False
+            for attempt in range(MAX_RETRIES):
+                _pace()
                 try:
-                    return json.loads(text)
-                except json.JSONDecodeError:
-                    m = re.search(r"\{.*\}", text, re.S)
-                    if m:
-                        return json.loads(m.group(0))
-                    raise
-            except RateLimitError as e:
-                last_err = e
-                rate_limited = True
-                more_models = mi < len(MODELS) - 1
-                if more_models and attempt >= 1:
-                    log.warning("Groq %s rate-limited — failing over to %s",
-                                model, MODELS[mi + 1])
-                    break
-                ra = None
-                try:
-                    ra = float(getattr(e, "response", None).headers.get("retry-after"))
-                except Exception:
+                    resp = client().chat.completions.create(
+                        model=model, max_tokens=max_tokens, temperature=0,
+                        response_format={"type": "json_object"}, messages=messages,
+                    )
+                    text = resp.choices[0].message.content or ""
+                    text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
+                    try:
+                        return json.loads(text)
+                    except json.JSONDecodeError:
+                        m = re.search(r"\{.*\}", text, re.S)
+                        if m:
+                            return json.loads(m.group(0))
+                        raise
+                except RateLimitError as e:
+                    last_err = e
+                    rate_limited = True
+                    more_models = mi < len(MODELS) - 1
+                    more_cycles = cycle < GROQ_MAX_CYCLES - 1
+                    # read Retry-After if present (Groq sends a LONG one — 40+ min —
+                    # when the DAILY token quota is exhausted, not a brief throttle)
                     ra = None
-                backoff = ra if ra else min(8 * (attempt + 1), 60)
-                log.warning("Groq %s rate-limited (429) — waiting %ss (attempt %d/%d)",
-                            model, round(backoff), attempt + 1, MAX_RETRIES)
-                time.sleep(backoff)
-            except APIStatusError as e:
-                last_err = e
-                backoff = min(2 ** attempt * 2, 30)
-                log.warning("Groq %s %s — retrying in %ss (attempt %d/%d)",
-                            model, type(e).__name__, backoff, attempt + 1, MAX_RETRIES)
-                time.sleep(backoff)
-            except json.JSONDecodeError as e:
-                last_err = e
-                log.warning("Groq %s unparseable JSON — retrying (attempt %d)",
-                            model, attempt + 1)
-        if rate_limited and mi < len(MODELS) - 1:
-            _model_idx["i"] = mi + 1
-            log.info("Groq failover: primary model is now %s for the rest of this run",
-                     MODELS[mi + 1])
-            continue
-    raise RuntimeError(f"All Groq models exhausted ({', '.join(MODELS)}): {last_err}")
+                    try:
+                        ra = float(getattr(e, "response", None).headers.get("retry-after"))
+                    except Exception:
+                        ra = None
+                    # long wait = daily-quota exhaustion: fail over to the next model
+                    # (separate quota) immediately rather than sleeping it off
+                    if ra and ra > MAX_BACKOFF and more_models:
+                        log.warning("Groq %s daily-quota exhausted (Retry-After %ss) — "
+                                    "failing over to %s instead of waiting",
+                                    model, round(ra), MODELS[mi + 1])
+                        break
+                    if more_models and attempt >= 1:
+                        log.warning("Groq %s rate-limited — failing over to %s",
+                                    model, MODELS[mi + 1])
+                        break
+                    # hard-cap any wait so a huge Retry-After can never block the run
+                    backoff = min(ra, MAX_BACKOFF) if ra else min(8 * (attempt + 1), MAX_BACKOFF)
+                    if ra and ra > MAX_BACKOFF:
+                        log.warning("Groq %s Retry-After %ss exceeds %ss cap — waiting cap "
+                                    "then giving up this model", model, round(ra), MAX_BACKOFF)
+                    # last model in this cycle, still rate-limited: if more cycles
+                    # remain, break out to loop back to model 0; otherwise trip the
+                    # circuit breaker so subsequent calls fail fast.
+                    if not more_models and attempt >= 1:
+                        if more_cycles:
+                            log.warning("Groq %s (last model, cycle %d/%d) rate-limited — "
+                                        "looping back to %s", model, cycle + 1,
+                                        GROQ_MAX_CYCLES, MODELS[0])
+                            break
+                        _groq_cb["tripped_until"] = time.monotonic() + GROQ_CB_COOLDOWN
+                        log.error("Groq exhausted after %d cycles — tripping circuit breaker "
+                                  "for %ss; calls fail fast so the run finishes (candidates "
+                                  "left for manual extraction this window)", GROQ_MAX_CYCLES,
+                                  GROQ_CB_COOLDOWN)
+                        raise RuntimeError("Groq all-models rate-limited; circuit breaker tripped")
+                    log.warning("Groq %s rate-limited (429) — waiting %ss (attempt %d/%d)",
+                                model, round(backoff), attempt + 1, MAX_RETRIES)
+                    time.sleep(backoff)
+                except APIStatusError as e:
+                    last_err = e
+                    status = getattr(getattr(e, "response", None), "status_code", None)
+                    msg = str(e).lower()
+                    # 413 Payload Too Large will NEVER succeed on retry — too big.
+                    if status == 413:
+                        log.error("Groq %s 413 Payload Too Large — prompt too big to "
+                                  "extract; skipping this batch (no retry)", model)
+                        raise RuntimeError("Groq 413 payload too large") from e
+                    # A decommissioned / invalid model is permanent — drop and fail over.
+                    if status == 400 and ("decommission" in msg or "model_decommissioned" in msg
+                                          or "no longer supported" in msg or "has been deprecated" in msg):
+                        if mi < len(MODELS) - 1:
+                            log.error("Groq %s is decommissioned/invalid — failing over "
+                                      "to %s (remove it from GROQ_MODELS)", model, MODELS[mi + 1])
+                            rate_limited = True
+                            break
+                        log.error("Groq %s is decommissioned/invalid and no models remain", model)
+                        raise RuntimeError(f"Groq model {model} decommissioned") from e
+                    backoff = min(2 ** attempt * 2, 30)
+                    log.warning("Groq %s %s — retrying in %ss (attempt %d/%d)",
+                                model, type(e).__name__, backoff, attempt + 1, MAX_RETRIES)
+                    time.sleep(backoff)
+                except json.JSONDecodeError as e:
+                    last_err = e
+                    log.warning("Groq %s unparseable JSON — retrying (attempt %d)",
+                                model, attempt + 1)
+            if rate_limited and mi < len(MODELS) - 1:
+                _model_idx["i"] = mi + 1
+                log.info("Groq failover: primary model is now %s for the rest of this run",
+                         MODELS[mi + 1])
+                continue
+        # finished a full cycle without returning; if cycles remain, reset to
+        # model 0 and try the whole chain again (quotas may have recovered)
+        if cycle < GROQ_MAX_CYCLES - 1:
+            _model_idx["i"] = 0
+    raise RuntimeError(f"All Groq models exhausted after {GROQ_MAX_CYCLES} cycles "
+                       f"({', '.join(MODELS)}): {last_err}")
 
 
 def _results(data) -> list:
@@ -203,7 +278,8 @@ def parse_items_batch(items: List[OrderLineItem], chunk_size: int = 12) -> List[
         try:
             data = _ask_json(PARSE_PROMPT.format(lines=lines), max_tokens=4000)
         except Exception:
-            log.exception("Groq parse chunk failed — chunk items fall back to raw descriptions")
+            log.exception("Groq parse chunk failed (items %d–%d) — falling back to raw descriptions",
+                          start + 1, start + len(chunk))
             continue
         for d in _results(data):
             by_sku[str(d.get("sku"))] = d
@@ -341,3 +417,356 @@ def evaluate_equivalency(item: OrderLineItem, equivalent_name: str,
             "confidence_level": "possible_alternative",
             "basis": "AI equivalency check unavailable — manual review required",
         }
+
+
+# ----------------------------------------------- batched page extraction ---
+
+EXTRACT_PROMPT = """You are extracting structured data from scraped dental-supply
+product pages. The buyer ordered this reference product:
+
+  Description: "{description}"
+  Ordered variant (flavor/shade/size/sterility): {variant}
+  Ordered pack quantity: {pack_qty}
+
+Below are several scraped pages (markdown), each with an index. For EACH page,
+extract the data for the SPECIFIC product/variant that page is about. Critical
+rules for accuracy:
+- price: the price the buyer would ACTUALLY PAY TODAY for ONE unit of the EXACT
+  variant/pack the page is selling. Apply these rules in order:
+  1. SALE/DISCOUNT: if the page shows both an original and a discounted price
+     (e.g. struck-through "$280" with "$241", or "Was $280 Now $241", or
+     "Sale: $241"), use the CURRENT/SALE/NOW price ($241), never the original.
+     In markdown a struck-through original may appear as "~~$280~~" or just as a
+     higher number next to the lower one — the lower current price is the answer.
+  2. EXACT OPTION: if the page lists multiple variants/pack sizes, use the price
+     of the option matching the page's own title/URL — NEVER the default,
+     lowest, or per-unit price of a DIFFERENT option.
+  3. QUANTITY BREAKS: if the page shows tiered/bulk pricing (e.g. "1+: $241,
+     4+: $230, buy 4 get 1 free"), use the BASE single-pack price ($241), not
+     the bulk-discounted tier — unless the bulk price is the only one shown.
+  4. TOTAL not per-unit: return the price for the whole pack as sold (the
+     pack_quantity below), never the "$/each" unit price of a larger pack.
+  null if no public price is shown.
+- original_price: if the page shows a higher pre-discount/struck-through price
+  alongside the sale price, return that original number here (so we can show
+  "was $X, now $Y"). null if there is no separate original price.
+- pack_quantity: units per pack/box as sold on this page (integer). null if unclear.
+- variant: the shade/color/flavor/size this page is selling.
+- product_name: the product title as shown on the page.
+- requires_login_for_price: true if the price is hidden behind login/membership.
+- in_stock: true/false if shown, else null.
+- minimum_order_condition: any case-lot/minimum-qty/bulk-discount note attached
+  to the price (e.g. "buy 4 get 1 free", "min order 2"), else null.
+
+Return ONLY a JSON object {{"results": [...]}} with one object per page, each:
+{{"idx": <int>, "product_name": <str|null>, "price": <number|null>,
+  "original_price": <number|null>, "pack_quantity": <int|null>,
+  "variant": <str|null>, "requires_login_for_price": <bool>,
+  "in_stock": <bool|null>, "minimum_order_condition": <str|null>}}
+
+Pages:
+{pages}
+"""
+
+
+EXTRACT_VALIDATE_PROMPT = """You are analyzing scraped dental-supply product pages
+to (1) extract pricing data and (2) judge how well each matches the buyer's order.
+
+The buyer ordered (from Henry Schein):
+  Brand: {brand}
+  Product: {product_name}
+  Size/form: {size_form}
+  Ordered variant (flavor/shade/size/sterility): {variant}
+  Ordered pack quantity: {pack_qty}
+  Original description: "{description}"
+
+Below are scraped pages (markdown), each with an index. For EACH page do BOTH:
+
+STEP 1 — EXTRACT (read the page):
+- price: the price the buyer would ACTUALLY PAY TODAY for ONE unit of the EXACT
+  variant/pack the page sells. Rules in order:
+  1. SALE/DISCOUNT: if both an original and discounted price show (struck-through
+     "~~$280~~" with "$241", "Was $280 Now $241", "Sale $241"), use the CURRENT/
+     SALE price ($241), never the original.
+  2. EXACT OPTION: if multiple variants/packs are listed, use the price of the
+     option matching the page's own title/URL — never a different option's.
+  3. QUANTITY BREAKS: use the base single-pack price, not a bulk tier, unless the
+     bulk price is the only one shown.
+  4. TOTAL not per-unit: the whole-pack price, not "$/each".
+  null if no public price is shown.
+- original_price: higher pre-discount price if shown, else null.
+- pack_quantity: units per pack/box as sold (integer), else null.
+- variant: the shade/color/flavor/size this page sells.
+- product_name: the product title on the page.
+- requires_login_for_price: true if price is behind login/membership.
+- in_stock: true/false if shown, else null.
+- minimum_order_condition: any case-lot/min-qty/bulk note, else null.
+
+STEP 2 — VALIDATE (judge the match, using what you extracted in step 1):
+Decide the four trust criteria strictly (true/false each):
+  brand_match, name_match, size_form_match, pack_match
+Rules:
+- ALL FOUR true => match_type "exact". Any false => "approximate" if same product
+  family, else "rejected".
+- A different shade/variant (A2 vs A3, Green vs Yellow, S vs M) => name_match=false.
+  The extracted page data is authoritative over the search-result title.
+- A different pack quantity => pack_match=false even if cheaper.
+- If the buyer's product has no identifiable brand (Brand null), set
+  brand_match=true when the candidate is the same generic product type.
+- Marketing-name variations of the SAME line are NOT a name mismatch
+  ("Luxatemp Plus" vs "Luxatemp Automix Plus", "Glide" vs "Glide Pro-Health").
+- confidence: integer 0-100, vary with evidence quality; do not default.
+- CONSISTENCY: match_type may be "exact" ONLY when all four booleans are true.
+
+Return ONLY a JSON object {{"results": [...]}} with one object per page, each:
+{{"idx": <int>, "product_name": <str|null>, "price": <number|null>,
+  "original_price": <number|null>, "pack_quantity": <int|null>,
+  "variant": <str|null>, "requires_login_for_price": <bool>,
+  "in_stock": <bool|null>, "minimum_order_condition": <str|null>,
+  "match_type": <"exact"|"approximate"|"rejected">, "confidence": <int>,
+  "brand_match": <bool>, "name_match": <bool>, "size_form_match": <bool>,
+  "pack_match": <bool>, "notes": <str>}}
+
+Pages:
+{pages}
+"""
+
+
+def extract_and_validate_batch(item, candidates: List[PriceCandidate]) -> None:
+    """One Groq call per item that BOTH extracts pricing and judges match criteria.
+    On a 413 (prompt too big for the current model — e.g. after failover to a
+    smaller-context model), the chunk is split in half and retried down to single
+    pages, so a size limit NEVER drops a whole item's data. Mutates candidates in
+    place; deterministic checks still run AFTER this in matcher."""
+    pending = [c for c in candidates
+               if getattr(c, "scraped_markdown", None) and c.match_type != "rejected"]
+    if not pending:
+        return
+    log.info("SKU %s — Groq extract+validate for %d scraped page(s)",
+             item.schein_sku, len(pending))
+    # CHUNK = max pages per Groq call; PER_PAGE = max chars per page in the prompt.
+    # Kept conservative so the (longer) combined extract+validate prompt fits even
+    # the smaller-context failover models (llama-3.1-8b). 413 split-retry below is
+    # the safety net for anything that still slips over — it NEVER drops data.
+    CHUNK = int(os.environ.get("EXTRACT_CHUNK", "3"))
+    PER_PAGE = int(os.environ.get("EXTRACT_PER_PAGE_CHARS", "1500"))
+
+    def _run(chunk, per_page):
+        """Send one chunk; on 413 (too big for the current model) split in half
+        and retry, down to single pages, so a size limit NEVER drops data."""
+        if not chunk:
+            return
+        pages = "\n\n".join(
+            f'--- PAGE idx={i} (url: {c.url}) ---\n{(c.scraped_markdown or "")[:per_page]}'
+            for i, c in enumerate(chunk))
+        try:
+            data = _ask_json(EXTRACT_VALIDATE_PROMPT.format(
+                brand=item.brand, product_name=item.product_name,
+                size_form=item.size_form, variant=item.variant,
+                pack_qty=item.pack_qty, description=item.description,
+                pages=pages), max_tokens=3000)
+        except RuntimeError as e:
+            if "413" in str(e) or "payload too large" in str(e).lower():
+                if len(chunk) > 1:
+                    mid = len(chunk) // 2
+                    log.warning("SKU %s — 413 on %d pages; splitting into %d+%d and retrying",
+                                item.schein_sku, len(chunk), mid, len(chunk) - mid)
+                    _run(chunk[:mid], per_page)
+                    _run(chunk[mid:], per_page)
+                    return
+                # single page still too big: shrink its text and try once more
+                if per_page > 800:
+                    log.warning("SKU %s — 413 on a single page; shrinking text %d→800 and retrying",
+                                item.schein_sku, per_page)
+                    _run(chunk, 800)
+                    return
+                log.error("SKU %s — single page still 413 at 800 chars; skipping just this page (%s)",
+                          item.schein_sku, chunk[0].url[:60])
+                return
+            log.error("Groq extract+validate failed for SKU %s: %s", item.schein_sku, e)
+            return
+        except Exception as e:
+            log.error("Groq extract+validate failed for SKU %s: %s", item.schein_sku, e)
+            return
+        for d in _results(data):
+            try:
+                c = chunk[int(d["idx"])]
+            except (KeyError, IndexError, ValueError, TypeError):
+                continue
+            _apply_ev_result(item, c, d)
+
+    for start in range(0, len(pending), CHUNK):
+        _run(pending[start:start + CHUNK], PER_PAGE)
+    return
+
+
+def _apply_ev_result(item, c, d):
+    """Apply one extract+validate JSON result object to a candidate."""
+    # ---- extraction half ----
+    if d.get("requires_login_for_price"):
+        c.match_type = "rejected"
+        c.rejected_reason = "login required for pricing (public pricing only)"
+        return
+    c.scraped_product_name = d.get("product_name") or c.title
+    c.scraped_variant = d.get("variant")
+    ov = (getattr(c, "_ordered_variant", "") or item.variant or "").strip().lower()
+    if ov:
+        hay = f"{d.get('product_name','')} {d.get('variant','')}".lower()
+        toks = [w for w in re.split(r"[^a-z0-9]+", ov) if len(w) > 2]
+        if toks and not any(w in hay for w in toks):
+            c.variant_unverified = True
+    price = d.get("price")
+    if isinstance(price, (int, float)):
+        vp = float(price)
+    elif isinstance(price, str):
+        cleaned = price.replace(",", "").replace("$", "").strip()
+        _m = re.search(r"\d+(?:\.\d+)?", cleaned)
+        vp = float(_m.group(0)) if _m else None
+    else:
+        vp = None
+    if vp:
+        if c.price and abs(vp - c.price) / max(c.price, 0.01) > 0.4:
+            c.notes = ((c.notes + " · ") if c.notes else "") + (
+                f"page price ${vp} differs sharply from listing ${c.price} — verify")
+        c.price = vp
+    op = d.get("original_price")
+    if isinstance(op, str):
+        _m = re.search(r"\d+(?:\.\d+)?", op.replace(",", "").replace("$", ""))
+        op = float(_m.group(0)) if _m else None
+    if isinstance(op, (int, float)) and op > 0:
+        c.original_price = float(op)
+        if vp and op > vp:
+            pct = round((op - vp) / op * 100)
+            note = f"on sale: was ${op:.2f}, now ${vp:.2f} ({pct}% off)"
+            c.pack_condition = (c.pack_condition + " · " + note) if c.pack_condition else note
+    if d.get("pack_quantity") is not None:
+        try:
+            c.pack_qty = int(float(d["pack_quantity"]))
+        except (TypeError, ValueError):
+            pass
+    if d.get("in_stock") is not None:
+        c.in_stock = bool(d["in_stock"])
+    if d.get("minimum_order_condition"):
+        c.pack_condition = d["minimum_order_condition"]
+    # ---- validation half ----
+    c.match_type = d.get("match_type", "rejected")
+    try:
+        c.confidence = int(float(d.get("confidence", 0)))
+    except (TypeError, ValueError):
+        c.confidence = 0
+    c.criteria = {k: bool(d.get(k)) for k in
+                  ("brand_match", "name_match", "size_form_match", "pack_match")}
+    if d.get("notes"):
+        c.notes = ((c.notes + " · ") if c.notes else "") + d["notes"]
+    if c.match_type == "rejected":
+        c.rejected_reason = d.get("notes") or c.rejected_reason
+
+
+# --------------------------------------------- manual (no-Groq) fallback ---
+# Last-resort price extraction from scraped markdown WITHOUT any AI, used when
+# Groq is fully rate-limited (circuit breaker tripped). It mirrors the Groq
+# pricing rules as far as regex can: skip struck-through originals, prefer the
+# current/sale/"Now" price, take the price nearest the product title. Every
+# price it sets is flagged unverified so it can NEVER be treated as an exact
+# match — it only ensures the report shows *a* price instead of nothing.
+
+_PRICE_TOKEN = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)")
+# struck-through markdown: ~~$280~~  → the original/was price, must be skipped
+_STRIKE = re.compile(r"~~\s*\$\s?\d[\d,]*(?:\.\d{2})?\s*~~")
+# words that mark a price as the OLD/original one (skip these)
+_WAS_NEAR = re.compile(r"(was|reg(?:ular)?|orig(?:inal)?|list|msrp|compare)\b", re.I)
+# words that mark the CURRENT price to prefer
+_NOW_NEAR = re.compile(r"(now|sale|today|your price|our price|special)\b", re.I)
+
+
+def _manual_price_from_markdown(md: str) -> tuple[float | None, float | None, str]:
+    """Return (current_price, original_price, note) from markdown without AI.
+    Heuristics mirror the Groq prompt rules; result is always flagged unverified
+    by the caller. Returns (None, None, ...) if no usable price is found."""
+    if not md:
+        return None, None, "no content"
+    # 1) collect struck-through prices — these are originals, never the answer
+    struck = set()
+    for m in _STRIKE.finditer(md):
+        mm = _PRICE_TOKEN.search(m.group(0))
+        if mm:
+            struck.add(mm.group(1))
+    # 2) gather all price tokens with their position + nearby words
+    candidates = []   # (price_float, raw_str, score)
+    for m in _PRICE_TOKEN.finditer(md):
+        raw = m.group(1)
+        if raw in struck:
+            continue                       # skip struck-through originals
+        try:
+            val = float(raw.replace(",", ""))
+        except ValueError:
+            continue
+        if val <= 0:
+            continue
+        # The label that owns a price PRECEDES it ("Was $99", "Your price: $79"),
+        # so weight the text immediately BEFORE the price far more than text
+        # after it. Stop the preceding window at any INTERVENING price token, so
+        # a previous price's label (e.g. "MSRP $50") can't bleed onto this one.
+        before = md[max(0, m.start() - 24):m.start()]
+        prev_price = _PRICE_TOKEN.search(before)
+        if prev_price:
+            before = before[prev_price.end():]   # only text AFTER the prior price
+        after = md[m.end():min(len(md), m.end() + 12)]
+        score = 0.0
+        if _NOW_NEAR.search(before):
+            score += 5                      # "now/sale/your price" right before → strong prefer
+        elif _NOW_NEAR.search(after):
+            score += 1
+        if _WAS_NEAR.search(before):
+            score -= 5                      # "was/reg/msrp" right before → strong avoid
+        elif _WAS_NEAR.search(after):
+            score -= 1
+        # earlier in the page = nearer the product title/buy box = more likely
+        # the main price; small weight so a label always outranks position
+        score += max(0.0, 1.5 - (m.start() / 800))
+        candidates.append((val, raw, score))
+    if not candidates:
+        return None, None, "no price token found"
+    # pick the highest-scoring; tie-break toward the EARLIER price (nearer title)
+    best = max(candidates, key=lambda t: t[2])
+    # an original price, if we saw a struck-through one, for the "was/now" note
+    original = None
+    if struck:
+        try:
+            original = max(float(s.replace(",", "")) for s in struck)
+        except ValueError:
+            original = None
+    note = "price auto-extracted from page text (AI unavailable) — UNVERIFIED, confirm manually"
+    if original and original > best[0]:
+        note += f"; appears on sale (was ${original:.2f})"
+    return best[0], original, note
+
+
+def manual_extract_fallback(item, candidates: List[PriceCandidate]) -> int:
+    """No-AI fallback: fill price from scraped markdown for candidates that have
+    markdown but never got AI-extracted (Groq exhausted). Everything is flagged
+    unverified and forced to 'approximate' so it can't be reported as exact.
+    Returns how many candidates were given a price this way."""
+    n = 0
+    for c in candidates:
+        md = getattr(c, "scraped_markdown", None)
+        # only fill ones the AI didn't already handle (no scraped_product_name)
+        if not md or c.scraped_product_name is not None or c.match_type == "rejected":
+            continue
+        price, original, note = _manual_price_from_markdown(md)
+        if price is None:
+            continue
+        c.price = price
+        if original and original > price:
+            c.original_price = original
+        c.variant_unverified = True        # never exact — variant not AI-confirmed
+        c.match_type = "approximate"
+        c.confidence = 0
+        c.criteria = c.criteria or {"brand_match": False, "name_match": False,
+                                    "size_form_match": False, "pack_match": False}
+        c.notes = ((c.notes + " · ") if c.notes else "") + note
+        n += 1
+    if n:
+        log.warning("SKU %s — manual fallback: auto-extracted %d price(s) from page "
+                    "text (Groq unavailable); all flagged UNVERIFIED", item.schein_sku, n)
+    return n

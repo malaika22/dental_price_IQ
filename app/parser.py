@@ -91,7 +91,6 @@ def _ocr_fallback(doc: fitz.Document) -> str:
 
 def parse_order_pdf(pdf_path: str | Path) -> ParsedOrder:
     pdf_path = Path(pdf_path)
-    log.info("Opening PDF: %s", pdf_path.name)
     doc = fitz.open(pdf_path)
     text = _extract_text(doc)
 
@@ -99,9 +98,14 @@ def parse_order_pdf(pdf_path: str | Path) -> ParsedOrder:
     if not items:  # possible scanned PDF (Format 2)
         log.info("No structured line items found in %s — trying OCR fallback", pdf_path.name)
         text = _ocr_fallback(doc)
-        if not text:
-            log.error("OCR fallback returned no text for %s", pdf_path.name)
         items = _parse_lines(text)
+
+    ship_to = None
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    for idx, ln in enumerate(lines):
+        if ln.lower() == "ship to" and idx + 1 < len(lines):
+            ship_to = lines[idx + 1]
+            break
 
     ref = REFERENCE_RE.search(text)
     total = TOTAL_RE.search(text)
@@ -110,13 +114,10 @@ def parse_order_pdf(pdf_path: str | Path) -> ParsedOrder:
     order = ParsedOrder(
         source_file=pdf_path.name,
         reference=ref.group(1) if ref else None,
+        ship_to_name=ship_to,
         order_date=date.group(1) if date else None,
         total_price=_to_float(total.group(1)) if total else None,
         items=items,
-    )
-    log.info(
-        "Parsed %d line item(s) — ref=%s date=%s",
-        len(items), order.reference, order.order_date,
     )
     _validate(order)
     return order

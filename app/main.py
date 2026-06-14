@@ -6,12 +6,24 @@ CLI: python -m app.main path/to/order.pdf  (or use run_pipeline.py)
 """
 from __future__ import annotations
 import logging
+import os
 import shutil
 import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import List
+
+# On throttled hosts (e.g. Render free tier, 0.1 vCPU) Python's stdout is
+# block-buffered when not a TTY, so log lines emitted right before a blocking
+# network call (e.g. "scraping …") sit unflushed — making a slow scrape look
+# like a total freeze with no output. Force line-buffering so every log line
+# appears as it happens.
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+except Exception:
+    pass
 
 from fastapi import FastAPI, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
@@ -28,26 +40,14 @@ OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 
-def _process_item_safe(item) -> ItemResult:
-    """Catch per-item crashes so one SKU cannot 500 the whole pipeline."""
-    try:
-        return matcher.process_item(item)
-    except Exception:
-        log.exception("Stage 1 failed for SKU %s", item.schein_sku)
-        return ItemResult(item=item)
-
-
-def run_pipeline(pdf_path: str | Path, parallel: int = 2,
+def run_pipeline(pdf_path: str | Path, parallel: int = int(os.environ.get("PIPELINE_PARALLEL", "1")),
                  skip_search: bool = False) -> dict:
     """Full Stage 1+2 run for one order PDF. Returns paths of the 3 reports.
 
     skip_search=True runs intake + AI parsing + report scaffolding only
     (used for parser validation / dry runs without API spend).
     """
-    try:
-        order = parser.parse_order_pdf(pdf_path)
-    except Exception as e:
-        raise ValueError(f"Could not read PDF: {e}") from e
+    order = parser.parse_order_pdf(pdf_path)
     search_mod.reset_firecrawl_budget()
     if not order.items:
         raise ValueError(f"No line items extracted from {pdf_path}")
@@ -55,16 +55,14 @@ def run_pipeline(pdf_path: str | Path, parallel: int = 2,
     # open DB up front so the per-SKU discovery cache can be loaded before the
     # sweep (skips re-discovery of repeat items across runs)
     conn = db.connect(OUTPUT_DIR / "dental_intel.sqlite3")
+    db.set_scrape_db_path(OUTPUT_DIR / "dental_intel.sqlite3")  # scrape cache uses same DB
     if not skip_search:
         search_mod.load_discovery_cache(conn)
     log.info("Parsed %d items from %s (ref %s)", len(order.items),
              order.source_file, order.reference)
 
     if not skip_search:
-        try:
-            ai.parse_items_batch(order.items)        # batched Groq calls (chunked)
-        except Exception:
-            log.exception("Groq parse failed — items will use raw descriptions as search queries")
+        ai.parse_items_batch(order.items)        # batched Groq calls (chunked)
 
     results: List[ItemResult] = []
     findings: List[EquivalencyFinding] = []
@@ -73,19 +71,38 @@ def run_pipeline(pdf_path: str | Path, parallel: int = 2,
         results = [ItemResult(item=i) for i in order.items]
     else:
         # Stage 1 — market sweep + verification + 4-criteria matching,
-        # parallel across items
-        with ThreadPoolExecutor(max_workers=parallel) as ex:
-            results = list(ex.map(_process_item_safe, order.items))
+        # parallel across items. Each item gets a hard wall-clock cap that
+        # ACTUALLY fires: we wait on each future with its own timeout instead of
+        # as_completed (which never yields a future that never completes, so the
+        # old cap could not catch a truly-stuck item). A stuck scrape thread is
+        # abandoned and the run continues.
+        from concurrent.futures import TimeoutError as _FTimeout
+        import time as _time
+        item_budget = int(os.environ.get("ITEM_TIMEOUT_SEC", "180"))
+        results_by_idx: dict[int, ItemResult] = {}
+        with ThreadPoolExecutor(max_workers=max(parallel, 2)) as ex:
+            futures = {n: ex.submit(matcher.process_item, it)
+                       for n, it in enumerate(order.items)}
+            for n in range(len(order.items)):
+                sku = order.items[n].schein_sku
+                try:
+                    results_by_idx[n] = futures[n].result(timeout=item_budget)
+                except _FTimeout:
+                    log.error("Stage 1 — SKU %s exceeded %ss wall-clock cap; "
+                              "abandoning it so the run finishes (a stuck scrape "
+                              "thread may linger in the background)", sku, item_budget)
+                    results_by_idx[n] = ItemResult(item=order.items[n])
+                except Exception:
+                    log.exception("Stage 1 — SKU %s crashed; continuing", sku)
+                    results_by_idx[n] = ItemResult(item=order.items[n])
+        results = [results_by_idx[n] for n in range(len(order.items))]
 
         # Stage 2 — equivalency, table-driven
         entries = matcher.load_equivalency_table(CONFIG_DIR)
         for r in results:
-            try:
-                f = matcher.run_equivalency(r, entries)
-                if f:
-                    findings.append(f)
-            except Exception:
-                log.exception("Stage 2 failed for SKU %s", r.item.schein_sku)
+            f = matcher.run_equivalency(r, entries)
+            if f:
+                findings.append(f)
 
     stem = (order.reference or Path(pdf_path).stem).replace("/", "_")
     p1 = reports.write_price_match_report(order, results, OUTPUT_DIR / f"{stem}_price_match.xlsx")
@@ -96,14 +113,6 @@ def run_pipeline(pdf_path: str | Path, parallel: int = 2,
         search_mod.flush_discovery_cache(conn)
     db.persist_run(conn, order, results, findings)
     conn.close()
-
-    if not skip_search:
-        search_mod.firecrawl_log_run_summary(order.reference)
-        fc = search_mod.firecrawl_stats()
-        log.info(
-            "=== Pipeline complete: ref=%s items=%d firecrawl_scrapes=%d skipped=%d exhausted=%s ===",
-            order.reference, len(order.items), fc["scrapes"], fc["skipped"], fc["exhausted"],
-        )
 
     return {
         "reference": order.reference,
@@ -134,9 +143,6 @@ async def run_order(file: UploadFile):
     try:
         summary = run_pipeline(tmp_path)
         return JSONResponse(summary)
-    except ValueError as e:
-        log.warning("bad request: %s", e)
-        return JSONResponse({"error": str(e)}, status_code=400)
     except Exception as e:
         log.exception("pipeline failed")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -144,7 +150,7 @@ async def run_order(file: UploadFile):
 
 @app.get("/reports/{name}")
 def get_report(name: str):
-    f = OUTPUT_DIR / Path(name).name
+    f = OUTPUT_DIR / name
     if not f.exists() or f.suffix != ".xlsx":
         return JSONResponse({"error": "not found"}, status_code=404)
     return FileResponse(f)

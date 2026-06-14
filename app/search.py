@@ -34,46 +34,12 @@ import requests
 from .models import OrderLineItem, PriceCandidate
 
 log = logging.getLogger(__name__)
-fc_credit_log = logging.getLogger("firecrawl.credits")
 
 SERPAPI_KEY = os.environ.get("SERPAPI_API_KEY", "")
 FIRECRAWL_KEY = os.environ.get("FIRECRAWL_API_KEY", "")
 FIRECRAWL_MAX_SCRAPES = int(os.environ.get("FIRECRAWL_MAX_SCRAPES_PER_RUN", "150"))
-_fc_state = {
-    "exhausted": False,
-    "exhausted_reason": None,
-    "scrapes": 0,
-    "skipped": 0,
-    "credits": 0,
-}
+_fc_state = {"exhausted": False, "scrapes": 0, "credits": 0}
 _fc_lock = threading.Lock()
-
-
-def _mark_firecrawl_exhausted(reason: str, *, url: str = "", tag: str = "") -> None:
-    """Log once when Firecrawl can no longer scrape this run."""
-    with _fc_lock:
-        if _fc_state["exhausted"]:
-            return
-        _fc_state["exhausted"] = True
-        _fc_state["exhausted_reason"] = reason
-    where = f" (triggered by {tag}{url[:80]})" if url else ""
-    if reason == "402":
-        fc_credit_log.error(
-            "========== FIRECRAWL CREDITS EXHAUSTED (HTTP 402) ==========\n"
-            "Firecrawl rejected the scrape — account credits are used up.\n"
-            "All further page verifications THIS RUN will be skipped.\n"
-            "Impact: candidates stay unverified; Price Match report may be empty.\n"
-            "Fix: top up at https://www.firecrawl.dev/ then re-run the order.\n"
-            "First failing URL%s",
-            where,
-        )
-    elif reason == "budget":
-        fc_credit_log.warning(
-            "========== FIRECRAWL SCRAPE BUDGET REACHED ==========\n"
-            "Per-run cap FIRECRAWL_MAX_SCRAPES_PER_RUN=%d reached — no more scrapes this run.\n"
-            "Raise the cap in .env if you intended to scrape more pages.",
-            FIRECRAWL_MAX_SCRAPES,
-        )
 # Total Firecrawl credit budget for a run and the slice reserved exclusively
 # for the stage-3 supplier fallback (so open-web /search can't drain it all).
 FIRECRAWL_RUN_CREDITS = int(os.environ.get("FIRECRAWL_RUN_CREDITS", "1000"))
@@ -94,9 +60,7 @@ def reset_firecrawl_budget():
     """Call at the start of each pipeline run."""
     with _fc_lock:
         _fc_state["exhausted"] = False
-        _fc_state["exhausted_reason"] = None
         _fc_state["scrapes"] = 0
-        _fc_state["skipped"] = 0
         _fc_state["credits"] = 0
     _gp_state["disabled"] = False
     _gp_state["failures"] = 0
@@ -104,43 +68,6 @@ def reset_firecrawl_budget():
     _serp_state["consecutive_failures"] = 0
     _shop_state["disabled"] = False
     _shop_state["zero_streak"] = 0
-
-
-def firecrawl_stats() -> dict:
-    """Scrape budget used this run (logged at pipeline end)."""
-    with _fc_lock:
-        return {
-            "scrapes": _fc_state["scrapes"],
-            "skipped": _fc_state["skipped"],
-            "exhausted": _fc_state["exhausted"],
-            "exhausted_reason": _fc_state["exhausted_reason"],
-        }
-
-
-def firecrawl_log_run_summary(order_ref: str | None = None) -> None:
-    """End-of-run summary on the dedicated firecrawl.credits logger."""
-    fc = firecrawl_stats()
-    ref = f" ref={order_ref}" if order_ref else ""
-    if fc["exhausted"] and fc["exhausted_reason"] == "402":
-        fc_credit_log.error(
-            "========== FIRECRAWL RUN SUMMARY%s ==========\n"
-            "Status: CREDITS EXHAUSTED — %d page(s) scraped, %d candidate(s) skipped.\n"
-            "Price Match quality was degraded. Top up Firecrawl credits and re-run.",
-            ref, fc["scrapes"], fc["skipped"],
-        )
-    elif fc["exhausted"] and fc["exhausted_reason"] == "budget":
-        fc_credit_log.warning(
-            "========== FIRECRAWL RUN SUMMARY%s ==========\n"
-            "Status: per-run scrape budget reached — %d scraped, %d skipped.",
-            ref, fc["scrapes"], fc["skipped"],
-        )
-    else:
-        fc_credit_log.info(
-            "Firecrawl run summary%s: %d scrape(s), %d skipped, credits OK",
-            ref, fc["scrapes"], fc["skipped"],
-        )
-
-
 CONFIG_DIR = Path(os.environ.get("CONFIG_DIR", Path(__file__).resolve().parent.parent / "config"))
 
 PRICE_RE = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)")
@@ -213,6 +140,10 @@ _disc_new = {}            # sku -> [urls]      (discovered this run, to persist)
 _disc_lock = threading.Lock()
 DISCOVERY_CACHE_DAYS = int(os.environ.get("DISCOVERY_CACHE_DAYS", "7"))
 DISCOVERY_CACHE_ENABLED = os.environ.get("DISCOVERY_CACHE", "1") not in ("0", "false", "False")
+# Scrape cache: reuse scraped markdown for SCRAPE_CACHE_HOURS so a re-run after
+# a freeze (or a repeat order) skips re-scraping — the biggest credit saver.
+SCRAPE_CACHE_HOURS = int(os.environ.get("SCRAPE_CACHE_HOURS", "24"))
+SCRAPE_CACHE_ENABLED = os.environ.get("SCRAPE_CACHE", "1") not in ("0", "false", "False")
 
 
 def load_discovery_cache(conn) -> None:
@@ -410,7 +341,7 @@ _gp_state = {"disabled": False, "failures": 0}
 # items in a row, stop calling it for the rest of the run (logs show it
 # consistently returning 0 usable on this SerpAPI plan). Saves 1 call/query/item.
 _shop_state = {"disabled": False, "zero_streak": 0}
-SHOP_DISABLE_AFTER = int(os.environ.get("GOOGLE_SHOPPING_DISABLE_AFTER", "1"))
+SHOP_DISABLE_AFTER = int(os.environ.get("GOOGLE_SHOPPING_DISABLE_AFTER", "3"))
 
 
 def _resolve_google_product(product_id: str, cands: list, seen: set,
@@ -577,7 +508,7 @@ def _firecrawl_search(query: str, cands: list, seen: set, *,
         r = requests.post("https://api.firecrawl.dev/v2/search",
                            headers={"Authorization": f"Bearer {FIRECRAWL_KEY}",
                                     "Content-Type": "application/json"},
-                           json=body, timeout=60)
+                           json=body, timeout=(15, 60))
         if r.status_code == 402:
             _mark_firecrawl_exhausted("402", tag=f"{stage} search ")
             return 0
@@ -671,7 +602,20 @@ def market_sweep(item: OrderLineItem, max_candidates: int = 14) -> tuple[List[Pr
         if cands:
             log.info("SKU %s — discovery CACHE HIT: %d known URL(s), skipping search "
                      "(scrapes still run fresh)", item.schein_sku, len(cands))
-            shortlist = _shortlist(cands, max_candidates)
+            # Cached candidates are ALL price-less (cache stores URLs only), so
+            # the normal priced/reserve split in _shortlist would starve them to
+            # just 3 reserve slots. Instead cap ≤2 per domain and take up to
+            # max_candidates — giving cached items the same scrape breadth as
+            # fresh ones (prices are read on-page during the fresh scrape).
+            by_dom: dict[str, int] = {}
+            shortlist = []
+            for c in cands:
+                d = _domain(c.url)
+                if by_dom.get(d, 0) >= 2:
+                    continue
+                by_dom[d] = by_dom.get(d, 0) + 1
+                shortlist.append(c)
+            shortlist = shortlist[:max_candidates]
             return shortlist, flagged
 
     serp_ok = bool(SERPAPI_KEY) and not _serp_state["exhausted"]
@@ -770,6 +714,13 @@ def market_sweep(item: OrderLineItem, max_candidates: int = 14) -> tuple[List[Pr
     if DISCOVERY_CACHE_ENABLED and cands:
         with _disc_lock:
             _disc_new[item.schein_sku] = [c.url for c in cands]
+        # also persist NOW (own thread-safe connection) so a freeze later in the
+        # run doesn't lose the discovery work already paid for this item
+        try:
+            from . import db
+            db.save_discovery_now(item.schein_sku, [c.url for c in cands])
+        except Exception:
+            pass
     if shortlist:
         log.info("SKU %s — sweep done: %d/%d shortlisted (cheapest=$%s at %s)",
                  item.schein_sku, len(shortlist), len(cands),
@@ -800,19 +751,25 @@ def firecrawl_verify(c: PriceCandidate, sku: str = "") -> PriceCandidate:
     """Render the candidate page (JS executed) and extract authoritative data.
     The scraped page is the source of truth over the search-result title."""
     tag = f"SKU {sku} — " if sku else ""
+    # SCRAPE CACHE: if this URL was scraped recently (this run or a previous one
+    # that froze/crashed), reuse the stored markdown — costs ZERO Firecrawl
+    # credits. This is what makes a re-run after a freeze cheap.
+    if SCRAPE_CACHE_ENABLED:
+        try:
+            from . import db
+            cached_md = db.get_cached_scrape(c.url, SCRAPE_CACHE_HOURS)
+        except Exception:
+            cached_md = None
+        if cached_md:
+            c.scraped_markdown = cached_md[:int(os.environ.get("SCRAPE_MD_CAP", "2000"))]
+            log.info("%sscrape CACHE HIT (%d chars, 0 credits) — %s",
+                     tag, len(c.scraped_markdown), c.url[:60])
+            return c
     with _fc_lock:
         if _fc_state["exhausted"]:
-            _fc_state["skipped"] += 1
-            reason = _fc_state["exhausted_reason"]
-            c.notes = (
-                "scrape skipped — Firecrawl credits exhausted (402) earlier in this run"
-                if reason == "402"
-                else f"scrape skipped — per-run budget of {FIRECRAWL_MAX_SCRAPES} scrapes reached"
-            )
+            c.notes = "scrape skipped — Firecrawl credits exhausted (402) earlier in this run"
             return c
         if _fc_state["scrapes"] >= FIRECRAWL_MAX_SCRAPES:
-            _mark_firecrawl_exhausted("budget")
-            _fc_state["skipped"] += 1
             c.notes = f"scrape skipped — per-run budget of {FIRECRAWL_MAX_SCRAPES} scrapes reached"
             return c
         _fc_state["scrapes"] += 1
@@ -822,31 +779,56 @@ def firecrawl_verify(c: PriceCandidate, sku: str = "") -> PriceCandidate:
         return c
     log.info("%sscraping %s (%s) …", tag, c.source_site, c.url[:100])
     try:
-        r = requests.post(
-            "https://api.firecrawl.dev/v2/scrape",
-            headers={"Authorization": f"Bearer {FIRECRAWL_KEY}",
-                     "Content-Type": "application/json"},
-            json={
-                "url": c.url,
-                "formats": [{"type": "json", "schema": FIRECRAWL_SCHEMA}],
-                "onlyMainContent": True,
-                "waitFor": 3000,
-                "timeout": 45000,
-                # serve a cached page if it was scraped within FIRECRAWL_MAX_AGE_MS
-                # (default 7 days) — cheaper + faster. Prices rarely move week-to-
-                # week; set FIRECRAWL_MAX_AGE_MS=0 to always fetch fresh.
-                "maxAge": int(os.environ.get("FIRECRAWL_MAX_AGE_MS", str(7 * 24 * 60 * 60 * 1000))),
-            },
-            timeout=70,
-        )
+        # Hard total-time deadline: requests' read timeout resets on every byte,
+        # so a server trickling data slowly (some net32 listing pages do) can
+        # hang far past it. Run the POST in a daemon helper thread and enforce an
+        # absolute ceiling. We deliberately do NOT join a thread that blew the
+        # ceiling (a `with` executor would block on exit waiting for it) — it is
+        # left as a leaked daemon so this function returns immediately and the
+        # run never freezes. A handful of leaked threads per run is harmless.
+        import concurrent.futures as _cf
+        HARD_DEADLINE = int(os.environ.get("SCRAPE_HARD_DEADLINE_SEC", "90"))
+        _ex = _cf.ThreadPoolExecutor(max_workers=1)
+
+        def _do_post():
+            return requests.post(
+                "https://api.firecrawl.dev/v2/scrape",
+                headers={"Authorization": f"Bearer {FIRECRAWL_KEY}",
+                         "Content-Type": "application/json"},
+                json={
+                    "url": c.url,
+                    "formats": ["markdown"],
+                    "onlyMainContent": True,
+                    "waitFor": 3000,
+                    "timeout": 45000,
+                    "maxAge": int(os.environ.get("FIRECRAWL_MAX_AGE_MS", str(7 * 24 * 60 * 60 * 1000))),
+                },
+                timeout=(15, 60),
+            )
+
+        fut = _ex.submit(_do_post)
+        try:
+            r = fut.result(timeout=HARD_DEADLINE)
+        except _cf.TimeoutError:
+            log.error("%sscrape HARD TIMEOUT (%ss ceiling) — abandoning slow page %s",
+                      tag, HARD_DEADLINE, c.url[:70])
+            c.notes = "scrape abandoned — page exceeded hard time ceiling"
+            _ex.shutdown(wait=False)   # do NOT block on the stuck thread
+            return c
+        _ex.shutdown(wait=False)
         r.raise_for_status()
         payload = r.json().get("data", {})
-        extracted = payload.get("json") or payload.get("extract") or {}
+        markdown = payload.get("markdown") or ""
     except requests.HTTPError as e:
         status = getattr(e.response, "status_code", None)
         log.error("%sscrape FAILED (%s) for %s", tag, status, c.url[:80])
         if status == 402:
-            _mark_firecrawl_exhausted("402", url=c.url, tag=tag)
+            with _fc_lock:
+                if not _fc_state["exhausted"]:
+                    _fc_state["exhausted"] = True
+                    log.error("FIRECRAWL CREDITS EXHAUSTED (402) — all further "
+                              "scrapes this run will be skipped; candidates will be "
+                              "marked unverified. Top up the Firecrawl plan and re-run.")
             c.notes = "not verified — Firecrawl credits exhausted (402)"
             return c
         if status in (404, 410):
@@ -855,44 +837,54 @@ def firecrawl_verify(c: PriceCandidate, sku: str = "") -> PriceCandidate:
         else:
             c.notes = f"page verification failed: HTTP {status}"
         return c
+    except requests.Timeout:
+        log.error("%sscrape TIMEOUT (socket stalled) for %s — skipping candidate",
+                  tag, c.url[:80])
+        c.notes = "page verification timed out (slow/unresponsive site)"
+        return c
     except Exception as e:
         log.error("%sscrape FAILED for %s: %s", tag, c.url[:80], e)
         c.notes = f"page verification failed: {e}"
         return c
 
-    if extracted.get("requires_login_for_price"):
-        log.warning("%sscrape: login wall at %s", tag, c.url[:80])
+    # cheap login-wall heuristic on the raw markdown (no AI call needed) so
+    # gated pages are rejected before they reach the Groq extraction batch.
+    low = markdown.lower()
+    if not markdown.strip():
+        c.notes = "scrape returned empty content"
+        return c
+    if (("log in" in low or "login" in low or "sign in" in low or "member price" in low
+         or "call for price" in low or "request a quote" in low)
+            and "$" not in markdown):
+        log.warning("%sscrape: likely login wall at %s", tag, c.url[:80])
         c.match_type = "rejected"
         c.rejected_reason = "login required for pricing (public pricing only)"
         return c
 
-    c.scraped_product_name = extracted.get("product_name")
-    c.scraped_variant = extracted.get("variant")
-    # variant confirmation: if the order specifies a variant (flavor/scent/
-    # shade/sterility) and neither the scraped name nor scraped variant mention
-    # it, mark unverified so it cannot pass as a clean EXACT (Q2 decision).
-    _ordered_variant = (getattr(c, "_ordered_variant", "") or "").strip().lower()
-    if _ordered_variant:
-        hay = f"{extracted.get('product_name','')} {extracted.get('variant','')}".lower()
-        toks = [w for w in re.split(r"[^a-z0-9]+", _ordered_variant) if len(w) > 2]
-        if toks and not any(w in hay for w in toks):
-            c.variant_unverified = True
-    verified_price = _parse_price(extracted.get("price"))
-    if verified_price:
-        if c.price and abs(verified_price - c.price) / max(c.price, 0.01) > 0.4:
-            c.notes = ((c.notes + " · ") if c.notes else "") + (
-                f"page price ${verified_price} differs sharply from search "
-                f"listing ${c.price} — possible wrong-variant price, verify")
-        c.price = verified_price
-    if extracted.get("pack_quantity") is not None:
+    # store the markdown for batched Groq extraction (done per-item in matcher).
+    # Truncate hard to keep the Groq batch prompt within token limits. A product
+    # page's price/pack/variant lives in the first ~1500 chars of main content;
+    # huge pages (380k-char category listings) are very unlikely to be product
+    # pages — a 2000-char slice of one is just nav/listing junk that pollutes the
+    # Groq batch and wastes tokens. Reject those outright. Moderately large pages
+    # (a product page padded with reviews/related items) are still kept+truncated,
+    # since their price lives in the first ~1500 chars.
+    MD_CAP = int(os.environ.get("SCRAPE_MD_CAP", "2000"))
+    OVERSIZE = int(os.environ.get("SCRAPE_OVERSIZE_REJECT", "150000"))
+    if len(markdown) > OVERSIZE:
+        log.info("%soversized page (%d chars) — almost certainly a category/search "
+                 "listing, not a product page; skipping extraction", tag, len(markdown))
+        c.notes = "skipped — page too large to be a product listing (category/search page)"
+        return c
+    c.scraped_markdown = markdown[:MD_CAP]
+    # Persist immediately so a later freeze/crash never loses this fetched page
+    # — a re-run reads it from cache for 0 credits.
+    if SCRAPE_CACHE_ENABLED:
         try:
-            c.pack_qty = int(float(extracted["pack_quantity"]))
-        except (TypeError, ValueError):
+            from . import db
+            db.save_scrape(c.url, c.scraped_markdown)
+        except Exception:
             pass
-    if extracted.get("in_stock") is not None:
-        c.in_stock = bool(extracted["in_stock"])
-    if extracted.get("minimum_order_condition"):
-        c.pack_condition = extracted["minimum_order_condition"]
-    log.info("%sscrape SUCCESS — price=$%s pack=%s product=%r",
-             tag, c.price, c.pack_qty, (c.scraped_product_name or c.title)[:60])
+    log.info("%sscrape SUCCESS (markdown, stored %d of %d chars) — %s",
+             tag, len(c.scraped_markdown), len(markdown), c.url[:60])
     return c

@@ -81,7 +81,6 @@ def _clean(val) -> str:
 
 
 def _savings_pct(per_unit: float, unit_price: float):
-    """Savings % vs Schein unit price; None when unit price is zero."""
     if not unit_price:
         return None
     return per_unit / unit_price * 100

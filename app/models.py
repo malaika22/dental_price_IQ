@@ -46,6 +46,8 @@ class PriceCandidate(BaseModel):
     pack_condition: Optional[str] = None     # e.g. "6-pack price", "case of 4 required"
     scraped_product_name: Optional[str] = None
     scraped_variant: Optional[str] = None
+    scraped_markdown: Optional[str] = None  # raw page markdown for batched Groq extraction
+    original_price: Optional[float] = None   # pre-discount/struck-through price if page was on sale
     variant_unverified: bool = False     # page didn't confirm the ordered variant
     is_generic_equivalent: bool = False  # same product type, different (or no) brand
     in_stock: Optional[bool] = None
