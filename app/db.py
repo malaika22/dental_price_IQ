@@ -53,6 +53,15 @@ CREATE TABLE IF NOT EXISTS scrape_cache (
     markdown TEXT,
     scraped_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+-- Extraction cache: stores the Groq extract+validate JSON per (url + ordered
+-- variant + pack) so a re-run of the SAME order skips the LLM for unchanged
+-- pages. Scrapes are already cached (0 Firecrawl credits); this saves the
+-- scarce Groq free-tier daily token budget on every debug re-run. Short TTL.
+CREATE TABLE IF NOT EXISTS extract_cache (
+    key TEXT PRIMARY KEY,
+    payload TEXT,
+    extracted_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 -- Stage 3 (order generation) — schema reserved, unused in Stage 1+2
 CREATE TABLE IF NOT EXISTS order_history (
     id INTEGER PRIMARY KEY,
@@ -152,6 +161,44 @@ def save_discovery(conn, schein_sku: str, urls: list) -> None:
     conn.commit()
 
 
+def purge_discovery(conn, skus=None) -> tuple[int, int]:
+    """Drop cached discovery for the given SKU(s) AND the scrape cache for the
+    URLs those SKUs had cached, so the next run re-discovers + re-scrapes them
+    fresh. Used to clear a wrong-variant URL that got pinned in the cache (e.g. a
+    net32 'Watermelon' URL cached for a 'Flavorless' order). skus=None purges ALL
+    discovery. Returns (discovery_rows_deleted, scrape_rows_deleted)."""
+    cur = conn.cursor()
+    if skus is not None:
+        skus = [s.strip() for s in skus if s and str(s).strip()]
+        if not skus:
+            return (0, 0)
+        marks = ",".join("?" * len(skus))
+        cur.execute(f"SELECT urls_json FROM discovery_cache WHERE schein_sku IN ({marks})", skus)
+    else:
+        cur.execute("SELECT urls_json FROM discovery_cache")
+    urls: list = []
+    for (uj,) in cur.fetchall():
+        try:
+            urls.extend(json.loads(uj) or [])
+        except Exception:
+            pass
+    n_scrape = 0
+    for u in urls:
+        try:
+            cur.execute("DELETE FROM scrape_cache WHERE url=?", (u,))
+            if cur.rowcount and cur.rowcount > 0:
+                n_scrape += cur.rowcount
+        except Exception:
+            pass
+    if skus is not None:
+        cur.execute(f"DELETE FROM discovery_cache WHERE schein_sku IN ({marks})", skus)
+    else:
+        cur.execute("DELETE FROM discovery_cache")
+    n_disc = cur.rowcount if (cur.rowcount and cur.rowcount > 0) else 0
+    conn.commit()
+    return (n_disc, n_scrape)
+
+
 # ------------------------------------------------------- scrape cache -------
 # Thread-safe across the pipeline's worker threads: each call opens its own
 # short-lived SQLite connection (SQLite handles concurrent writers via its
@@ -202,6 +249,48 @@ def save_scrape(url: str, markdown: str) -> None:
                 c.execute(
                     "INSERT OR REPLACE INTO scrape_cache(url, markdown, scraped_at)"
                     " VALUES (?,?,datetime('now'))", (url, markdown))
+                c.commit()
+            finally:
+                c.close()
+    except Exception:
+        pass
+
+
+def get_cached_extract(key: str, max_age_hours: int = 24) -> dict | None:
+    """Return the cached Groq extract+validate JSON for `key` if stored within
+    max_age_hours, else None. Lets a re-run of the same order skip the LLM for
+    pages whose scrape + ordered variant/pack are unchanged."""
+    if not key:
+        return None
+    try:
+        with _scrape_lock:
+            c = sqlite3.connect(_SCRAPE_DB_PATH["p"], timeout=10)
+            try:
+                cur = c.execute(
+                    "SELECT payload FROM extract_cache WHERE key=? AND "
+                    "extracted_at >= datetime('now', ?)",
+                    (key, f"-{int(max_age_hours)} hours"))
+                row = cur.fetchone()
+            finally:
+                c.close()
+        if row and row[0]:
+            return json.loads(row[0])
+    except Exception:
+        pass
+    return None
+
+
+def save_extract(key: str, payload: dict) -> None:
+    """Persist one page's Groq extract+validate JSON (refreshes timestamp)."""
+    if not key or payload is None:
+        return
+    try:
+        with _scrape_lock:
+            c = sqlite3.connect(_SCRAPE_DB_PATH["p"], timeout=10)
+            try:
+                c.execute(
+                    "INSERT OR REPLACE INTO extract_cache(key, payload, extracted_at)"
+                    " VALUES (?,?,datetime('now'))", (key, json.dumps(payload)))
                 c.commit()
             finally:
                 c.close()

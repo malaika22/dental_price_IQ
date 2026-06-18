@@ -335,6 +335,11 @@ def _pricematch_eligible(item, c: PriceCandidate) -> bool:
     crit = c.criteria or {}
     if c.price is None or c.scraped_product_name is None:
         return False
+    # an unverified / page-unconfirmed price is never negotiation-grade EXACT:
+    # it still appears as an option (with its ⚠ flag), but must not be presented
+    # to the Schein rep as a confirmed four-criteria match.
+    if getattr(c, "price_unreliable", False):
+        return False
     if not (0.05 * item.unit_price <= c.price <= 3.0 * item.unit_price):
         return False
     if _is_gated(c) or _pack_mismatch(item, c):
@@ -349,6 +354,35 @@ def _pricematch_eligible(item, c: PriceCandidate) -> bool:
     if not (crit.get("name_match") and crit.get("size_form_match") and crit.get("pack_match")):
         return False
     return True
+
+
+def _option_priority(item, c: PriceCandidate):
+    """Sort key for the up-to-3 options shown per item. Lower sorts first.
+
+    Client rule: among the options, give priority to candidates whose pack size
+    AND variant match the ordered item — don't let a cheaper wrong-pack or
+    wrong-variant listing outrank a correct one. Tiers (then cheapest within):
+      0 — full price-match-eligible exact (pack + variant + size all confirmed)
+      1 — pack matches AND variant confirmed
+      2 — pack matches (variant unconfirmed/different)
+      3 — everything else (pack mismatch / unknown)
+    Price-unreliable candidates are pushed below their tier so a confirmed price
+    is always preferred over an unverified one at the same match quality.
+    """
+    crit = c.criteria or {}
+    pack_ok = not _pack_mismatch(item, c)
+    variant_ok = (not getattr(c, "variant_unverified", False)
+                  and crit.get("name_match") is not False)
+    if _pricematch_eligible(item, c):
+        tier = 0
+    elif pack_ok and variant_ok:
+        tier = 1
+    elif pack_ok:
+        tier = 2
+    else:
+        tier = 3
+    unreliable = 1 if getattr(c, "price_unreliable", False) else 0
+    return (tier, unreliable, c.price if c.price is not None else 1e9)
 
 
 def write_price_match_report(order: ParsedOrder, results: List[ItemResult],
@@ -384,8 +418,12 @@ def write_price_match_report(order: ParsedOrder, results: List[ItemResult],
                     and not _is_gated(c)
                     and "page not found" not in (c.rejected_reason or "").lower())
 
+        # Order the pool so pack/variant-matching candidates lead, then cheapest
+        # within each tier (client rule: priority to matching pack/variant in the
+        # 3 options, not just the lowest price). Option 1 below still pulls the
+        # cheapest EXACT first; Options 2-3 then fill from this prioritised order.
         pool, seen_u = [], set()
-        for c in sorted(r.candidates, key=lambda c: c.price if c.price is not None else 1e9):
+        for c in sorted(r.candidates, key=lambda c: _option_priority(r.item, c)):
             if not _poolable(c) or c.url in seen_u:
                 continue
             seen_u.add(c.url)
@@ -397,10 +435,10 @@ def write_price_match_report(order: ParsedOrder, results: List[ItemResult],
         exacts = [c for c in pool if _pricematch_eligible(r.item, c)]
         opts = []
         if exacts:
-            opt1 = min(exacts, key=lambda c: c.price)   # already cheapest-first
+            opt1 = min(exacts, key=lambda c: c.price)   # cheapest exact
             opts.append(opt1)
-        # Options 2-3 (and Option 1 if no exact): next cheapest overall, any
-        # match type, excluding whatever is already chosen.
+        # Options 2-3 (and Option 1 if no exact): next best by pack/variant
+        # priority then price, excluding whatever is already chosen.
         for c in pool:
             if len(opts) >= options_per_item:
                 break

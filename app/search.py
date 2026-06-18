@@ -138,6 +138,283 @@ def firecrawl_log_run_summary(order_ref: str | None = None) -> None:
 CONFIG_DIR = Path(os.environ.get("CONFIG_DIR", Path(__file__).resolve().parent.parent / "config"))
 
 PRICE_RE = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)")
+
+# Sections that list DIFFERENT products (cross-sell / recommendations). Their
+# prices are a major source of wrong extractions — the model grabs a related
+# item's price instead of the product's. We cut the markdown at the first such
+# heading BEFORE sending it to Groq. NOTE: same-product seller blocks
+# ("vendor options", "other sellers", "more buying choices") are deliberately
+# NOT listed here — those carry the real (often lowest) price and must stay.
+_CROSS_SELL_RE = re.compile(
+    r"(?im)^\s*[#>*\-\s]*(?:"
+    r"(?:related\s+products?|related\s+items?|related\s+categor\w*|"
+    r"you\s+may\s+also\s+like|similar\s+items?|"
+    r"best[\s\-]?sellers?\s+(?:related|for)|"
+    r"customers\s+(?:who\s+bought|also\s+(?:bought|viewed))|"
+    r"people\s+also\s+(?:bought|viewed)|frequently\s+bought\s+together|"
+    r"recommended\s+(?:for\s+you|products?|items?)|more\s+like\s+this|"
+    r"you\s+might\s+also\s+like)\b"     # phrase at line start, trailing text OK
+    r"|related\s*:?\s*$"                 # bare "Related" heading (anchored, safe)
+    r")"
+)
+# Explicit "price is behind login" phrasing — must reject EVEN IF other "$"
+# values appear elsewhere on the page (promos, related items). This is what the
+# old `"$" not in markdown` heuristic missed (e.g. dhpsupply "Login to see price").
+_LOGIN_PRICE_RE = re.compile(
+    r"(?i)(?:log\s?in|login|sign\s?in|register|create\s+an?\s+account)\s+"
+    r"(?:to|for|and|to\s+view|to\s+see)?\s*(?:see|view|reveal|unlock|get)?\s*"
+    r"(?:the\s+)?(?:price|pricing|cost|your\s+price|net\s+price|member\s+price)"
+)
+
+# HARD GATE: "log in TO SEE / TO VIEW / TO REVEAL the price" means the price slot
+# itself is hidden — any "$" left on the page is a promo, related item, or bit of
+# metadata, NOT the product's buy price. This is stricter than _LOGIN_PRICE_RE: it
+# deliberately does NOT match qualified upsell phrasing ("log in to see YOUR/
+# contract/member price"), where a public list price is normally shown alongside.
+_LOGIN_HARDGATE_RE = re.compile(
+    r"(?i)(?:log\s?in|login|sign\s?in)\s+(?:to|and)?\s*"
+    r"(?:see|view|reveal|unlock|check)\s+(?:the\s+|our\s+)?"
+    r"(?:price|pricing|cost)\b"
+)
+
+
+def _strip_cross_sell(markdown: str) -> str:
+    """Cut markdown at the first 'related products / similar items / customers
+    also bought' heading so cross-sell prices never reach the extractor. Keeps
+    same-product seller sections (vendor options / other sellers) intact. Only
+    cuts when the heading appears comfortably past the buy box (> MIN chars) so
+    we never truncate the main price block itself."""
+    if not markdown:
+        return markdown
+    MIN = int(os.environ.get("CROSS_SELL_MIN_KEEP", "400"))
+    earliest = None
+    for m in _CROSS_SELL_RE.finditer(markdown):
+        if m.start() >= MIN:
+            earliest = m.start()
+            break
+    if earliest is not None:
+        return markdown[:earliest]
+    return markdown
+
+
+# ---- Deterministic multi-seller (aggregator) price parser -------------------
+# Net32 and SupplyClinic list MANY sellers for the SAME product in a table. The
+# correct price is the LOWEST AVAILABLE seller's landed total (price + shipping),
+# NOT the big headline "$X/ea". A small free-tier model cannot reliably scan such
+# a table for the minimum (this is exactly why net32 kept returning the headline
+# /ea instead of the Lowest-Price row), so we parse it deterministically here and
+# LOCK the price. Client rule: "Special Order" counts as AVAILABLE; only
+# out-of-stock / backordered rows are excluded. Falls back to the LLM (returns
+# None) when the page isn't a parseable seller table.
+_AGG_DOMAINS = ("net32.com", "supplyclinic.com")
+_OOS_RE = re.compile(
+    r"(out\s+of\s+stock|back[\s\-]?order(?:ed)?|sold\s+out|unavailable|"
+    r"notify\s+me|discontinued|no\s+longer\s+available)", re.I)
+_STRIKE_RE = re.compile(r"~~\s*\$\s?\d[\d,]*(?:\.\d{2})?\s*~~")
+_EA_RE = re.compile(r"\$\s?([\d,]+\.\d{2})\s*/\s*ea", re.I)
+_SHIP_ADD_RE = re.compile(r"\+\s*\$\s?([\d,]+\.\d{2})\b")
+_FREE_SHIP_RE = re.compile(r"free\s+(?:standard\s+)?shipping|free\s+ship", re.I)
+_LOWEST_RE = re.compile(r"lowest\s+price", re.I)
+_PRICE_NUM_RE = re.compile(r"\$\s?([\d,]+\.\d{2})")
+# Per-seller availability marker (one per row) — used to segment SupplyClinic's
+# LIST PRICE table when 'Add to Cart' button text is dropped by the scraper.
+_AVAIL_RE = re.compile(
+    r"(?i)\b(in\s+stock|in-stock|special\s+order|available|"
+    r"back[\s\-]?order(?:ed)?|out\s+of\s+stock|sold\s+out|unavailable|discontinued)\b")
+
+
+def _to_f(s) -> Optional[float]:
+    try:
+        return float(str(s).replace(",", ""))
+    except (ValueError, AttributeError):
+        return None
+
+
+def _aggregator_domain(url: str) -> Optional[str]:
+    d = _domain(url)
+    for a in _AGG_DOMAINS:
+        if d == a or d.endswith("." + a):
+            return a
+    return None
+
+
+def _seller_rows(section: str) -> list:
+    """Split a vendor/seller table into per-seller chunks. Every seller row ends
+    in an 'Add to Cart' affordance on both Net32 and SupplyClinic, so we split on
+    that and drop the trailing page-footer fragment after the last one."""
+    parts = re.split(r"(?i)add\s+to\s+cart", section)
+    return [p for p in parts[:-1] if p.strip()] if len(parts) > 1 else []
+
+
+def _vendor_section(markdown: str) -> str:
+    """Slice from the vendor/seller-table heading to the first cross-sell/footer
+    heading so neighbouring product prices never enter the min()."""
+    low = markdown.lower()
+    starts = [low.find(h) for h in
+              ("vendor options", "seller options", "other sellers", "all options",
+               "price + shipping", "list price")
+              if h in low]
+    start = min([s for s in starts if s >= 0], default=0)
+    tail = markdown[start:]
+    m = _CROSS_SELL_RE.search(tail)
+    return tail[:m.start()] if m else tail
+
+
+def _net32_options(section: str) -> list:
+    """(landed_total, has_lowest_badge) per seller from a Net32 vendor table.
+    Anchors on each '$X.XX/ea' (exactly one per seller) instead of an 'Add to
+    Cart' delimiter — Firecrawl often drops button text, which left the old
+    split-based parser with zero rows. The stock note PRECEDES a seller's price
+    (after its name); shipping + 'Lowest Price' badge FOLLOW it, so look-behind
+    is bounded to the previous price (only this seller's stock) and look-ahead to
+    the next price. Client rule: 'Special Order' is AVAILABLE — _OOS_RE excludes
+    only out-of-stock / backordered / sold-out / discontinued rows."""
+    eas = list(_EA_RE.finditer(section))
+    opts = []
+    for i, m in enumerate(eas):
+        base = _to_f(m.group(1))
+        if base is None:
+            continue
+        prev_end = eas[i - 1].end() if i > 0 else 0
+        nxt = eas[i + 1].start() if i + 1 < len(eas) else len(section)
+        behind = section[prev_end:m.start()]                  # this seller's name + stock
+        if _OOS_RE.search(behind):
+            continue                                          # unavailable → skip
+        ahead = section[m.start():min(nxt, m.start() + 220)]  # shipping
+        if _FREE_SHIP_RE.search(ahead):
+            ship = 0.0
+        else:
+            sm = _SHIP_ADD_RE.search(ahead)
+            ship = (_to_f(sm.group(1)) or 0.0) if sm else 0.0
+        total = round(base + ship, 2)
+        if total > 0:
+            opts.append((total, bool(_LOWEST_RE.search(section[m.start():nxt]))))
+    return opts
+
+
+def _supplyclinic_options(section: str) -> list:
+    """(landed_total, has_lowest_badge) per seller from a SupplyClinic LIST PRICE
+    table. Anchors on each availability marker (one per seller); the current
+    price follows it. Struck-through 'was' originals are dropped; flat-rate
+    shipping is added, not read as the price. 'Special Order' counts as
+    available; backordered / out-of-stock rows are skipped."""
+    avs = list(_AVAIL_RE.finditer(section))
+    opts = []
+    for i, m in enumerate(avs):
+        if _OOS_RE.search(m.group(0)):              # this seller's availability is OOS
+            continue
+        nxt = avs[i + 1].start() if i + 1 < len(avs) else len(section)
+        block = _STRIKE_RE.sub(" ", section[m.start():nxt])   # drop struck originals
+        if _FREE_SHIP_RE.search(block):
+            ship = 0.0
+        else:
+            sm = _SHIP_ADD_RE.search(block)
+            ship = (_to_f(sm.group(1)) or 0.0) if sm else 0.0
+        clean = _SHIP_ADD_RE.sub(" ", block)        # so flat-rate isn't read as the price
+        nums = [n for n in (_to_f(x) for x in _PRICE_NUM_RE.findall(clean)) if n and n > 0]
+        if not nums:
+            continue
+        opts.append((round(min(nums) + ship, 2), bool(_LOWEST_RE.search(block))))
+    return opts
+
+
+def _legacy_seller_options(section: str) -> list:
+    """Fallback: original 'Add to Cart'-split row parser → [(total, badge)]."""
+    options = []
+    for row in _seller_rows(section):
+        if _OOS_RE.search(row):
+            continue
+        clean = _STRIKE_RE.sub(" ", row)
+        ea = _EA_RE.search(clean)
+        if ea:
+            base = _to_f(ea.group(1))
+            if base is None:
+                continue
+            if _FREE_SHIP_RE.search(clean):
+                ship = 0.0
+            else:
+                sm = _SHIP_ADD_RE.search(clean)
+                ship = (_to_f(sm.group(1)) or 0.0) if sm else 0.0
+            total = round(base + ship, 2)
+        else:
+            sm = _SHIP_ADD_RE.search(clean)
+            ship = (_to_f(sm.group(1)) or 0.0) if (sm and not _FREE_SHIP_RE.search(clean)) else 0.0
+            clean_no_ship = _SHIP_ADD_RE.sub(" ", clean)
+            nums = [n for n in (_to_f(x) for x in _PRICE_NUM_RE.findall(clean_no_ship))
+                    if n and n > 0]
+            if not nums:
+                continue
+            total = round(min(nums) + ship, 2)
+        if total and total > 0:
+            options.append((total, bool(_LOWEST_RE.search(row))))
+    return options
+
+
+def parse_aggregator_price(url: str, markdown: str) -> Optional[dict]:
+    """Pick the lowest AVAILABLE seller's landed total (price + shipping) from a
+    Net32 / SupplyClinic multi-seller table. Returns
+    {'price', 'lowest_badge_matched', 'n_rows'} or None when the page isn't a
+    parseable aggregator table (caller then falls back to the LLM). Anchor-based
+    per-seller parsing (robust to dropped 'Add to Cart' text) runs first; the
+    older split-based parser is the final fallback."""
+    dom = _aggregator_domain(url)
+    if not dom or not markdown:
+        return None
+    section = _vendor_section(markdown)
+    if dom == "net32.com":
+        options = _net32_options(section)
+    elif dom == "supplyclinic.com":
+        options = _supplyclinic_options(section)
+    else:
+        options = []
+    if not options:                                  # robustness fallback
+        options = _legacy_seller_options(section)
+    if not options:
+        return None
+    min_total = min(t for t, _ in options)
+    badge = [t for t, lo in options if lo]
+    # Prefer the LOWEST-PRICE-badged row, but only when it really is the minimum;
+    # otherwise fall back to the min of the Total column (client rule).
+    badge_price = min(badge) if badge else None
+    if badge and abs(badge_price - min_total) <= 0.01:
+        return {"price": badge_price, "lowest_badge_matched": True,
+                "n_rows": len(options), "badge_price": badge_price}
+    return {"price": min_total, "lowest_badge_matched": False,
+            "n_rows": len(options), "badge_price": badge_price}
+
+
+def _apply_aggregator_lock(c: PriceCandidate, full_markdown: str, tag: str = "") -> bool:
+    """If the candidate URL is a Net32/SupplyClinic seller table, set its price
+    deterministically from the lowest available seller and LOCK it so the AI
+    layer won't overwrite it. Returns True when a price was locked."""
+    try:
+        agg = parse_aggregator_price(c.url, full_markdown)
+    except Exception as e:                         # parser must never break a scrape
+        log.warning("%saggregator parse error (%s) — falling back to AI for %s",
+                    tag, e, c.url[:60])
+        return False
+    if not agg:
+        return False
+    c.price = agg["price"]
+    c.in_stock = True
+    c.price_locked = True
+    src = "Lowest Price row" if agg["lowest_badge_matched"] else "min of Total column"
+    note = (f"price set from {_domain(c.url)} seller table: lowest available "
+            f"(incl. shipping) of {agg['n_rows']} seller(s), via {src}")
+    c.notes = ((c.notes + " · ") if c.notes else "") + note
+    # Transparency flag: a "Lowest Price" badge was detected but we ended up
+    # pricing a DIFFERENT (lower) row. That's sometimes legitimate — a seller
+    # with a higher /ea but free shipping can beat the badged /ea on landed
+    # total — but it's also the signature of a stray parse, so surface it.
+    bp = agg.get("badge_price")
+    if bp and c.price + 0.02 < bp:
+        c.notes += (f" · NOTE: net32/supplyclinic 'Lowest Price' row was ${bp:.2f}; "
+                    f"parsed lowest landed is ${c.price:.2f} — verify")
+    log.info("%saggregator price LOCKED $%.2f (%d sellers, badge_match=%s) — %s",
+             tag, c.price, agg["n_rows"], agg["lowest_badge_matched"], c.url[:60])
+    return True
+
+
 CATEGORY_PATH_RE = re.compile(
     r"/(category|categories|collections?|catalog|search|shop|browse|brands?|c|s|tag|filter)(/|$|\?)",
     re.I,
@@ -210,6 +487,12 @@ DISCOVERY_CACHE_ENABLED = os.environ.get("DISCOVERY_CACHE", "1") not in ("0", "f
 # Scrape cache: reuse scraped markdown for SCRAPE_CACHE_HOURS so a re-run after
 # a freeze (or a repeat order) skips re-scraping — the biggest credit saver.
 SCRAPE_CACHE_HOURS = int(os.environ.get("SCRAPE_CACHE_HOURS", "24"))
+# Aggregator (net32 / supplyclinic) pages are LIVE marketplaces: the lowest-seller
+# price and the "Lowest Price" badge move intraday as sellers reprice, so even a
+# few-hours-old snapshot can be off by a few cents (e.g. cached $39.47 vs live
+# $39.35). Give them their own, much shorter TTL so the deterministic lock tracks
+# the live page. Default 0 = never serve a cached aggregator page; always re-scrape.
+AGG_SCRAPE_CACHE_HOURS = int(os.environ.get("AGG_SCRAPE_CACHE_HOURS", "0"))
 SCRAPE_CACHE_ENABLED = os.environ.get("SCRAPE_CACHE", "1") not in ("0", "false", "False")
 
 
@@ -218,6 +501,21 @@ def load_discovery_cache(conn) -> None:
     _disc_cache.clear(); _disc_new.clear()
     if not (DISCOVERY_CACHE_ENABLED and conn):
         return
+    # One-shot purge hook: DISCOVERY_PURGE_ALL=1 wipes the whole discovery cache;
+    # DISCOVERY_PURGE="sku1,sku2" clears specific SKUs. Purged SKUs (and their
+    # cached scraped pages) are removed BEFORE loading, so they're re-discovered
+    # and re-scraped fresh this run — the clean fix for a pinned wrong-variant URL.
+    purge_all = os.environ.get("DISCOVERY_PURGE_ALL", "0") not in ("0", "false", "False", "")
+    purge_skus = [s for s in re.split(r"[,\s]+", os.environ.get("DISCOVERY_PURGE", "").strip()) if s]
+    if purge_all or purge_skus:
+        try:
+            from . import db
+            nd, ns = db.purge_discovery(conn, None if purge_all else purge_skus)
+            log.info("Discovery cache PURGE (%s): removed %d discovery row(s) and "
+                     "%d cached page(s) — these will be re-discovered this run",
+                     "ALL" if purge_all else ",".join(purge_skus), nd, ns)
+        except Exception as e:
+            log.warning("discovery purge failed: %s", e)
     try:
         from . import db
         cur = conn.cursor()
@@ -233,6 +531,18 @@ def load_discovery_cache(conn) -> None:
                      "items will skip re-discovery", len(_disc_cache), DISCOVERY_CACHE_DAYS)
     except Exception as e:
         log.debug("discovery cache load skipped: %s", e)
+
+
+def purge_discovery_cache(conn, skus=None) -> tuple[int, int]:
+    """Programmatic purge: clear cached discovery (+ scraped pages) for skus (or
+    ALL when skus is None) and drop them from the in-memory cache. Returns
+    (discovery_rows_deleted, scrape_rows_deleted)."""
+    from . import db
+    nd, ns = db.purge_discovery(conn, skus)
+    with _disc_lock:
+        for s in (list(skus) if skus else list(_disc_cache.keys())):
+            _disc_cache.pop(s, None)
+    return nd, ns
 
 
 def flush_discovery_cache(conn) -> None:
@@ -841,11 +1151,15 @@ def firecrawl_verify(c: PriceCandidate, sku: str = "") -> PriceCandidate:
     if SCRAPE_CACHE_ENABLED:
         try:
             from . import db
-            cached_md = db.get_cached_scrape(c.url, SCRAPE_CACHE_HOURS)
+            # Aggregator pages get the short (default 0) TTL; everything else 24h.
+            ttl = AGG_SCRAPE_CACHE_HOURS if _aggregator_domain(c.url) else SCRAPE_CACHE_HOURS
+            cached_md = db.get_cached_scrape(c.url, ttl) if ttl > 0 else None
         except Exception:
             cached_md = None
         if cached_md:
-            c.scraped_markdown = cached_md[:int(os.environ.get("SCRAPE_MD_CAP", "2000"))]
+            full_main = _strip_cross_sell(cached_md)          # full (uncapped) for table parsing
+            c.scraped_markdown = full_main[:int(os.environ.get("SCRAPE_MD_CAP", "6000"))]
+            _apply_aggregator_lock(c, full_main, tag)         # net32/supplyclinic → deterministic price
             log.info("%sscrape CACHE HIT (%d chars, 0 credits) — %s",
                      tag, len(c.scraped_markdown), c.url[:60])
             return c
@@ -929,42 +1243,76 @@ def firecrawl_verify(c: PriceCandidate, sku: str = "") -> PriceCandidate:
         c.notes = f"page verification failed: {e}"
         return c
 
-    # cheap login-wall heuristic on the raw markdown (no AI call needed) so
-    # gated pages are rejected before they reach the Groq extraction batch.
-    low = markdown.lower()
+    # Login-wall heuristic (no AI call) so gated pages are dropped before the
+    # Groq batch. KEY REFINEMENT: many dental B2B sites show a public LIST price
+    # AND a "log in for your (contract) price" upsell — those are NOT gated, the
+    # public price is right there (e.g. scottsdental shows $133.95 / $129.95
+    # without login). So a login phrase only means "gated" when the page's MAIN
+    # content has NO real price. We strip cross-sell first so a related item's
+    # price (or its own "login to see price") can't sway the decision.
     if not markdown.strip():
         c.notes = "scrape returned empty content"
         return c
-    if (("log in" in low or "login" in low or "sign in" in low or "member price" in low
-         or "call for price" in low or "request a quote" in low)
-            and "$" not in markdown):
-        log.warning("%sscrape: likely login wall at %s", tag, c.url[:80])
+    main = _strip_cross_sell(markdown)
+    main_prices = PRICE_RE.findall(main)        # real "$<number>" tokens in main content
+    low_main = main.lower()
+    login_phrase = bool(_LOGIN_PRICE_RE.search(main))   # "log in to see price" etc.
+    hard_gate = bool(_LOGIN_HARDGATE_RE.search(main))   # "login to SEE price" (slot hidden)
+    login_words = ("log in" in low_main or "login" in low_main or "sign in" in low_main
+                   or "member price" in low_main or "call for price" in low_main
+                   or "request a quote" in low_main)
+    if hard_gate:
+        # The price slot itself is gated ("login to see price"). Whatever "$" we
+        # scraped is a promo / related-item / metadata artifact, never the buy
+        # price (e.g. dhpsupply Clinpro shows $24.95 nowhere a customer can buy).
+        log.warning("%sscrape: login wall (price gated — 'login to see price') at %s",
+                    tag, c.url[:80])
+        c.match_type = "rejected"
+        c.rejected_reason = "price gated behind login (login-to-see-price)"
+        return c
+    if (login_phrase or login_words) and not main_prices:
+        # gated AND no public price anywhere in the main content → reject
+        log.warning("%sscrape: login wall (no public price shown) at %s", tag, c.url[:80])
         c.match_type = "rejected"
         c.rejected_reason = "login required for pricing (public pricing only)"
         return c
+    if login_phrase and main_prices:
+        # public price present alongside a "log in for your price" upsell — keep
+        # it; the visible list price is usable. Just note the account-pricing hint.
+        c.notes = ((c.notes + " · ") if c.notes else "") + \
+            "public list price shown; site also offers account/contract pricing on login"
+        log.info("%slogin-for-price upsell present but %d public price(s) shown — "
+                 "keeping (NOT gated): %s", tag, len(main_prices), c.url[:70])
 
     # store the markdown for batched Groq extraction (done per-item in matcher).
-    # Truncate hard to keep the Groq batch prompt within token limits. A product
-    # page's price/pack/variant lives in the first ~1500 chars of main content;
-    # huge pages (380k-char category listings) are very unlikely to be product
-    # pages — a 2000-char slice of one is just nav/listing junk that pollutes the
-    # Groq batch and wastes tokens. Reject those outright. Moderately large pages
-    # (a product page padded with reviews/related items) are still kept+truncated,
-    # since their price lives in the first ~1500 chars.
-    MD_CAP = int(os.environ.get("SCRAPE_MD_CAP", "2000"))
+    # Truncate to keep the Groq batch prompt within token limits. Raised from
+    # 2000→6000: a real product page's price/pack/variant block can sit a few
+    # thousand chars in (after title, breadcrumb, gallery, variant selector), so
+    # a 2000-char slice often cut the price off — Groq then returned null and a
+    # stale snippet price survived. Huge pages (380k-char category listings) are
+    # still rejected outright by OVERSIZE below — that guard, not this cap, is
+    # what keeps non-product pages out of the batch.
+    MD_CAP = int(os.environ.get("SCRAPE_MD_CAP", "6000"))
     OVERSIZE = int(os.environ.get("SCRAPE_OVERSIZE_REJECT", "150000"))
     if len(markdown) > OVERSIZE:
         log.info("%soversized page (%d chars) — almost certainly a category/search "
                  "listing, not a product page; skipping extraction", tag, len(markdown))
         c.notes = "skipped — page too large to be a product listing (category/search page)"
         return c
-    c.scraped_markdown = markdown[:MD_CAP]
+    c.scraped_markdown = main[:MD_CAP]          # reuse the already-stripped main content
+    # Deterministic aggregator price (net32 / supplyclinic): parse the FULL main
+    # content (before the MD_CAP truncation) so every seller row is seen, even
+    # when the stored markdown is capped at 6000 chars.
+    _apply_aggregator_lock(c, main, tag)
     # Persist immediately so a later freeze/crash never loses this fetched page
-    # — a re-run reads it from cache for 0 credits.
+    # — a re-run reads it from cache for 0 credits. STORE THE FULL stripped main
+    # (not the MD_CAP-truncated slice): the aggregator table parser on a CACHE
+    # HIT must see every seller row, and net32 tables sit well past 6000 chars.
     if SCRAPE_CACHE_ENABLED:
         try:
             from . import db
-            db.save_scrape(c.url, c.scraped_markdown)
+            cache_cap = int(os.environ.get("SCRAPE_CACHE_MD_CAP", "150000"))
+            db.save_scrape(c.url, main[:cache_cap])
         except Exception:
             pass
     log.info("%sscrape SUCCESS (markdown, stored %d of %d chars) — %s",

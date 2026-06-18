@@ -196,8 +196,20 @@ def get_report(name: str):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("usage: python -m app.main <order.pdf> [--skip-search]")
+    argv = sys.argv[1:]
+    # One-shot discovery-cache purge flags (translate to the env hook used by
+    # load_discovery_cache, so the same path works for CLI and FastAPI):
+    #   --purge-discovery-all          wipe the whole discovery cache
+    #   --purge-discovery=SKU[,SKU]    clear specific SKUs (re-discovered fresh)
+    for a in argv:
+        if a == "--purge-discovery-all":
+            os.environ["DISCOVERY_PURGE_ALL"] = "1"
+        elif a.startswith("--purge-discovery="):
+            os.environ["DISCOVERY_PURGE"] = a.split("=", 1)[1]
+    pdf = next((a for a in argv if not a.startswith("--")), None)
+    if not pdf:
+        print("usage: python -m app.main <order.pdf> [--skip-search] "
+              "[--purge-discovery=SKU,SKU | --purge-discovery-all]")
         sys.exit(1)
-    out = run_pipeline(sys.argv[1], skip_search="--skip-search" in sys.argv)
+    out = run_pipeline(pdf, skip_search="--skip-search" in argv)
     print(out)

@@ -50,6 +50,7 @@ class PriceCandidate(BaseModel):
     original_price: Optional[float] = None   # pre-discount/struck-through price if page was on sale
     variant_unverified: bool = False     # page didn't confirm the ordered variant
     price_unreliable: bool = False        # AI price wildly diverges from listing — verify
+    price_locked: bool = False            # price set deterministically (aggregator table parser); AI must not overwrite it
     is_generic_equivalent: bool = False  # same product type, different (or no) brand
     in_stock: Optional[bool] = None
     # Verdict — assigned by real validation, never defaulted

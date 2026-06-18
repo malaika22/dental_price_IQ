@@ -17,6 +17,7 @@ Groq specifics handled here:
   pacer + exponential backoff on 429/5xx is built in.
 """
 from __future__ import annotations
+import hashlib
 import json
 import logging
 import os
@@ -26,16 +27,52 @@ import time
 from typing import List
 
 from groq import Groq, RateLimitError, APIStatusError
+try:                       # connection/timeout error types (present in modern SDKs)
+    from groq import APITimeoutError, APIConnectionError
+except ImportError:        # very old SDK fallback — treat as generic, retryable
+    class APITimeoutError(Exception):
+        pass
+    class APIConnectionError(Exception):
+        pass
 
 from .models import OrderLineItem, PriceCandidate
+from . import db
 
 log = logging.getLogger(__name__)
 
-_DEFAULT_MODELS = "llama-3.3-70b-versatile,llama-3.1-8b-instant,openai/gpt-oss-20b"
+_DEFAULT_MODELS = "llama-3.1-8b-instant,openai/gpt-oss-20b,llama-3.3-70b-versatile"
 MODELS = [m.strip() for m in os.environ.get(
     "GROQ_MODELS", os.environ.get("GROQ_MODEL", _DEFAULT_MODELS)).split(",") if m.strip()]
 MODEL = MODELS[0]
 _model_idx = {"i": 0}
+# Free-tier strategy: llama-3.3-70b-versatile has only ~100K tokens/day on the
+# free plan and is exhausted within a handful of items, after which extraction
+# silently drops to the weak models. So 8b-instant (~500K TPD) is now PRIMARY for
+# the bulk of pages, and 70b is reserved as an ESCALATION model spent only on the
+# few candidates the cheap model was unsure about (low confidence / conflicting
+# criteria / unreliable price) — see _escalate() in extract_and_validate_batch.
+ESCALATE_MODEL = os.environ.get("GROQ_ESCALATE_MODEL", "llama-3.3-70b-versatile")
+ESCALATE_ENABLED = os.environ.get("GROQ_ESCALATE", "1") not in ("0", "false", "False")
+ESCALATE_CONF = int(os.environ.get("GROQ_ESCALATE_CONF", "70"))   # below this confidence → re-check on 70b
+ESCALATE_MAX = int(os.environ.get("GROQ_ESCALATE_MAX", "3"))      # cap escalated pages per item (protect 70b budget)
+# Extraction-result cache: scrapes are already cached (0 Firecrawl credits on a
+# re-run); this caches the Groq EXTRACTION too, keyed by (url + ordered variant +
+# pack), so a debug re-run of the same order skips Groq entirely for unchanged
+# pages — the biggest free-tier token saver for an iterative workflow.
+EXTRACT_CACHE_ENABLED = os.environ.get("EXTRACT_CACHE", "1") not in ("0", "false", "False")
+EXTRACT_CACHE_HOURS = int(os.environ.get("EXTRACT_CACHE_HOURS", "24"))
+# Token trims (free-tier saver):
+#  - Locked pages (net32 / supplyclinic) already have an authoritative price from
+#    the seller-table parser; the LLM only needs the page top (title/variant) to
+#    judge criteria, so we send a small slice instead of the full page.
+#  - Price-window: for a NORMAL page whose price sits PAST the head window, we
+#    stitch the page top (title/variant) + the block around the price instead of
+#    sending the whole page. When the price is already inside the head we send the
+#    head unchanged (no behaviour change / no truncation-bug regression).
+EXTRACT_LOCKED_PAGE_CHARS = int(os.environ.get("EXTRACT_LOCKED_PAGE_CHARS", "1500"))
+EXTRACT_PRICE_WINDOW = os.environ.get("EXTRACT_PRICE_WINDOW", "1") not in ("0", "false", "False")
+EXTRACT_WIN_BEFORE = int(os.environ.get("EXTRACT_WIN_BEFORE", "1500"))
+EXTRACT_WIN_AFTER = int(os.environ.get("EXTRACT_WIN_AFTER", "2200"))
 # Run-level circuit breaker: when the LAST model (no failover left) gets hard
 # rate-limited, every subsequent call would grind through MAX_RETRIES×60s of
 # backoff — and with split-retry that multiplies into 10-15min freezes on a
@@ -52,6 +89,14 @@ _groq_exhausted = {"v": False, "until": 0.0}
 MIN_INTERVAL = float(os.environ.get("GROQ_MIN_INTERVAL", "2.6"))  # ~23 req/min, gentler on free-tier RPM
 MAX_RETRIES = 5
 MAX_BACKOFF = int(os.environ.get("GROQ_MAX_BACKOFF", "60"))  # hard cap on any single 429 wait (seconds)
+# Per-request HTTP timeout for the Groq SDK. The SDK's default is short enough
+# that a large extract+validate batch (several full product pages of markdown)
+# can be cut off mid-flight — the request aborts, the whole chunk's extracted
+# prices/criteria are lost, and the candidates fall back to raw search-snippet
+# prices (which is exactly how a wrong price like $9.95 survives into the
+# report). A generous timeout lets slow-but-valid responses finish instead of
+# being dropped. Env-tunable; raise further on a slow host.
+GROQ_TIMEOUT = float(os.environ.get("GROQ_TIMEOUT", "120"))
 
 _client: Groq | None = None
 _lock = threading.Lock()
@@ -64,7 +109,10 @@ def client() -> Groq:
         # max_retries=0 — disable the SDK's OWN retry layer so our paced
         # backoff (_pace + _ask_json) is the single source of retry truth.
         # Stacking both layers double-hammers the endpoint and wastes RPM.
-        _client = Groq(max_retries=0)  # uses GROQ_API_KEY env var
+        # timeout=GROQ_TIMEOUT — give big batches room to complete so a slow
+        # response is never truncated/aborted (which loses the whole chunk's
+        # data and lets stale snippet prices through).
+        _client = Groq(max_retries=0, timeout=GROQ_TIMEOUT)  # uses GROQ_API_KEY env var
     return _client
 
 
@@ -78,12 +126,15 @@ def _pace():
         _last_call = time.monotonic()
 
 
-def _ask_json(prompt: str, max_tokens: int = 4000) -> dict:
+def _ask_json(prompt: str, max_tokens: int = 4000, force_model: str | None = None) -> dict:
     """Ask Groq for JSON with retry + automatic model failover. Each model in
     MODELS has its OWN free-tier rate limit; if the current model stays
     rate-limited past a couple of attempts and another model remains, we fail
     over to it (and remember that for the rest of the run). Only when every
-    model is exhausted does the call raise."""
+    model is exhausted does the call raise.
+
+    force_model: when set, use ONLY that model (no failover chain) — used by the
+    escalation pass to spend the scarce 70b budget on a specific hard page."""
     last_err = None
     # circuit breaker: if the last model was just hard-rate-limited, fail fast
     # for a cooldown window instead of grinding 5×60s backoffs on every call
@@ -96,6 +147,44 @@ def _ask_json(prompt: str, max_tokens: int = 4000) -> dict:
                     "Respond ONLY with valid JSON. No prose, no markdown."},
         {"role": "user", "content": prompt},
     ]
+    # Escalation path: single forced model, short retry, NO failover/cycling.
+    if force_model:
+        for attempt in range(2):
+            _pace()
+            try:
+                resp = client().chat.completions.create(
+                    model=force_model, max_tokens=max_tokens, temperature=0,
+                    response_format={"type": "json_object"}, messages=messages,
+                )
+                text = resp.choices[0].message.content or ""
+                text = re.sub(r"^```(?:json)?|```$", "", text.strip(), flags=re.M).strip()
+                try:
+                    return json.loads(text)
+                except json.JSONDecodeError:
+                    m = re.search(r"\{.*\}", text, re.S)
+                    if m:
+                        return json.loads(m.group(0))
+                    raise
+            except RateLimitError as e:
+                last_err = e
+                ra = None
+                try:
+                    ra = float(getattr(e, "response", None).headers.get("retry-after"))
+                except Exception:
+                    ra = None
+                # escalation model out of quota → don't wait; keep the cheap result
+                if ra and ra > MAX_BACKOFF:
+                    raise RuntimeError(f"escalation model {force_model} quota exhausted") from e
+                time.sleep(min(ra or 6, MAX_BACKOFF))
+            except APIStatusError as e:
+                if getattr(getattr(e, "response", None), "status_code", None) == 413:
+                    raise RuntimeError("Groq 413 payload too large") from e
+                last_err = e
+                time.sleep(4)
+            except (APITimeoutError, APIConnectionError, json.JSONDecodeError) as e:
+                last_err = e
+                time.sleep(3)
+        raise RuntimeError(f"escalation model {force_model} failed: {last_err}")
     # Cycle through the whole model chain up to GROQ_MAX_CYCLES times before
     # giving up: after the last model rate-limits, loop BACK to the first (its
     # per-minute window may have reset). Bounded so it can't spin forever.
@@ -193,6 +282,23 @@ def _ask_json(prompt: str, max_tokens: int = 4000) -> dict:
                     last_err = e
                     log.warning("Groq %s unparseable JSON — retrying (attempt %d)",
                                 model, attempt + 1)
+                except (APITimeoutError, APIConnectionError) as e:
+                    # A timeout/connection drop is transient: the request was cut
+                    # off before a (valid) response arrived. Retry with a short
+                    # backoff instead of letting the exception bubble up and lose
+                    # the whole chunk's extracted data. Fail over to the next model
+                    # only after a couple of failures on this one.
+                    last_err = e
+                    if mi < len(MODELS) - 1 and attempt >= 1:
+                        log.warning("Groq %s timed out/connection error — failing over to %s",
+                                    model, MODELS[mi + 1])
+                        rate_limited = True   # reuse failover path below
+                        break
+                    backoff = min(4 * (attempt + 1), 20)
+                    log.warning("Groq %s timeout/connection error — retrying in %ss "
+                                "(attempt %d/%d): %s", model, backoff, attempt + 1,
+                                MAX_RETRIES, type(e).__name__)
+                    time.sleep(backoff)
             if rate_limited and mi < len(MODELS) - 1:
                 _model_idx["i"] = mi + 1
                 log.info("Groq failover: primary model is now %s for the rest of this run",
@@ -486,25 +592,48 @@ Below are scraped pages (markdown), each with an index. For EACH page do BOTH:
 STEP 1 — EXTRACT (read the page):
 - price: the price the buyer would ACTUALLY PAY TODAY for ONE unit of the EXACT
   variant/pack the page sells. Rules in order:
-  1. SALE/DISCOUNT: if both an original (higher) and a discounted (lower) price
-     are shown — e.g. a struck-through original next to a sale price, or "Was
-     <high> Now <low>", or "Sale <low>" — use the CURRENT/SALE (lower) price,
-     never the original. Read the ACTUAL numbers off THIS page; never invent a
-     price or reuse a number from these instructions.
-  2. EXACT OPTION: if multiple variants/packs are listed, use the price of the
-     option matching the page's own title/URL — never a different option's.
-  3. QUANTITY BREAKS: use the base single-pack price, not a bulk tier, unless the
-     bulk price is the only one shown.
-  4. TOTAL not per-unit: the whole-pack price, not "$/each".
-  5. If you cannot find a clear price for THIS product on the page, return null —
-     do NOT guess and do NOT copy a number from another product or from these
-     instructions.
+  1. ONLY THIS PRODUCT: price the item named in the page title/buy box. NEVER take
+     a price from a "Related Products", "Related Items", "Similar items", "Best
+     sellers related", "Customers who bought", "You may also like", or
+     "Recommended" section — those are DIFFERENT products. If the only prices you
+     can see belong to such sections, return null.
+  2. MULTI-SELLER / AGGREGATOR PAGES (e.g. Net32, SupplyClinic and similar that
+     list several sellers for the SAME product under "Vendor options",
+     "Price + Shipping" / "Total", "Other Sellers", or a "Lowest Price" badge):
+     use the LOWEST in-stock seller's TOTAL price INCLUDING shipping — i.e. the
+     value in the "Total" column / the row marked "Lowest Price". Do NOT use the
+     big headline "$X/ea" at the top: that is just the default seller and often
+     EXCLUDES shipping (e.g. headline "$26.93/ea + $9.95 shipping" is beaten by
+     another seller's "$26.94 Total, free shipping" — the correct price is the
+     $26.94 Total). When a per-each price has separate shipping, the comparable
+     number is price + shipping.
+  3. SALE/DISCOUNT: if both an original (higher) and a discounted (lower) price
+     are shown for THIS product — struck-through original next to a sale price,
+     or "Was <high> Now <low>" — use the CURRENT/SALE (lower) price. Only pair a
+     "was"/"now" when BOTH numbers clearly belong to this same product; never
+     build a fake discount from a related item's price.
+  4. MATCH THE ORDERED OPTION: the buyer ordered pack={pack_qty}, variant="{variant}".
+     If the page lists SEVERAL pack sizes (e.g. a "50-pack" group and a "100-pack"
+     group) or several flavors/shades/sizes, return the price of the row matching
+     BOTH the ordered pack size AND the ordered variant. NEVER return a smaller or
+     cheaper pack's price, and never a different flavor/shade's price, just because
+     it is lower. If the exact ordered pack+variant is NOT on the page, return the
+     closest single option's price and set pack_quantity and variant to what you
+     ACTUALLY priced (so the mismatch is visible) — do not pretend it matches.
+  5. TOTAL not per-unit: the whole-pack price as sold, not a "$/each" of a larger
+     pack (unless rule 2's seller Total already is the comparable).
+  6. If you cannot find a clear price for THIS product, return null — do NOT guess
+     and do NOT copy a number from another product or from these instructions.
   null if no public price is shown.
-- original_price: the higher pre-discount price if one is actually shown, else null.
+- original_price: the higher pre-discount price if one is actually shown for THIS
+  product, else null.
 - pack_quantity: units per pack/box as sold (integer), else null.
 - variant: the shade/color/flavor/size this page sells.
 - product_name: the product title on the page.
-- requires_login_for_price: true if price is behind login/membership.
+- requires_login_for_price: true if THIS product's price is behind login/membership
+  (e.g. "Log in to see price", "Login to view pricing", "Members only"). Set this
+  true and price=null even when unrelated prices (promos, related items) show a "$"
+  elsewhere on the page.
 - in_stock: true/false if shown, else null.
 - minimum_order_condition: any case-lot/min-qty/bulk note, else null.
 
@@ -516,6 +645,11 @@ Rules:
   family, else "rejected".
 - A different shade/variant (A2 vs A3, Green vs Yellow, S vs M) => name_match=false.
   The extracted page data is authoritative over the search-result title.
+- A different FLAVOR, SHADE, SIZE, or COLOR than ordered => name_match=false, even
+  when the brand and product line are identical. Examples that are MISMATCHES:
+  ordered "No Flavor / Flavorless / Unflavored" but page is "Watermelon" or "Mint";
+  ordered shade "A3.5" but page "C2" or "A2"; ordered size "#5" but page "#4".
+  Set variant to the value the page actually sells so the mismatch is visible.
 - A different pack quantity => pack_match=false even if cheaper.
 - If the buyer's product has no identifiable brand (Brand null), set
   brand_match=true when the candidate is the same generic product type.
@@ -537,6 +671,19 @@ Pages:
 {pages}
 """
 
+# Once 70b's daily quota is hit, stop probing it for the rest of the run so we
+# don't waste a failed escalation call on every remaining item.
+_esc_state = {"off": False}
+
+
+def _extract_key(item, c) -> str:
+    """Cache key for an extraction result: same (page, ordered variant, pack)
+    yields the same key across runs, so a debug re-run reuses the cached verdict
+    instead of paying Groq tokens again."""
+    ov = (getattr(c, "_ordered_variant", "") or getattr(item, "variant", "") or "")
+    raw = f"{getattr(c, 'url', '')}|{ov.strip().lower()}|{getattr(item, 'pack_qty', '')}"
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
 
 def extract_and_validate_batch(item, candidates: List[PriceCandidate]) -> None:
     """One Groq call per item that BOTH extracts pricing and judges match criteria.
@@ -548,14 +695,64 @@ def extract_and_validate_batch(item, candidates: List[PriceCandidate]) -> None:
                if getattr(c, "scraped_markdown", None) and c.match_type != "rejected"]
     if not pending:
         return
-    log.info("SKU %s — Groq extract+validate for %d scraped page(s)",
-             item.schein_sku, len(pending))
     # CHUNK = max pages per Groq call; PER_PAGE = max chars per page in the prompt.
-    # Kept conservative so the (longer) combined extract+validate prompt fits even
-    # the smaller-context failover models (llama-3.1-8b). 413 split-retry below is
-    # the safety net for anything that still slips over — it NEVER drops data.
-    CHUNK = int(os.environ.get("EXTRACT_CHUNK", "3"))
-    PER_PAGE = int(os.environ.get("EXTRACT_PER_PAGE_CHARS", "1500"))
+    # PER_PAGE was 1500, which on real product pages (Net32, dental-city, etc.)
+    # frequently cut off BELOW the price/pack/variant block — Groq then returned
+    # price=null and the stale search-snippet price survived into the report
+    # (this is the root cause of wrong prices like the $9.95 glove row). 4000
+    # chars comfortably covers the buy-box of a real product page while the
+    # OVERSIZE reject in search.py still keeps category/listing pages out. The
+    # 413 split-retry below is the safety net if a model's context is smaller.
+    CHUNK = int(os.environ.get("EXTRACT_CHUNK", "2"))
+    PER_PAGE = int(os.environ.get("EXTRACT_PER_PAGE_CHARS", "4000"))
+
+    # ---- extraction cache: reuse prior verdicts, skip Groq for unchanged pages
+    todo, hits = [], 0
+    for c in pending:
+        c._ev_key = _extract_key(item, c) if EXTRACT_CACHE_ENABLED else None
+        cached = None
+        if c._ev_key:
+            try:
+                cached = db.get_cached_extract(c._ev_key, EXTRACT_CACHE_HOURS)
+            except Exception:
+                cached = None
+        if cached:
+            _apply_ev_result(item, c, cached)
+            hits += 1
+        else:
+            todo.append(c)
+    log.info("SKU %s — %d scraped page(s): %d cache hit(s), %d to extract",
+             item.schein_sku, len(pending), hits, len(todo))
+    if not todo:
+        return
+
+    def _slice(c, per_page):
+        """Page text sent to the model, trimmed to save free-tier tokens:
+          - price_locked pages: small head slice (price is authoritative from the
+            seller-table parser; the LLM only confirms variant/criteria).
+          - normal pages: full head UNLESS the price sits past the head window, in
+            which case stitch the top (title/variant) + the block around the price
+            so a deep price is never truncated away."""
+        md = c.scraped_markdown or ""
+        if getattr(c, "price_locked", False):
+            return md[:EXTRACT_LOCKED_PAGE_CHARS]
+        if len(md) <= per_page:
+            return md
+        if EXTRACT_PRICE_WINDOW:
+            m = _PAGE_PRICE_RE.search(md)
+            if m and m.start() > per_page - 400:
+                head = md[: per_page // 3]
+                start = max(len(head), m.start() - EXTRACT_WIN_BEFORE)
+                end = m.start() + EXTRACT_WIN_AFTER
+                return (head + "\n…\n" + md[start:end])[:per_page]
+        return md[:per_page]
+
+    def _save(c, d):
+        if EXTRACT_CACHE_ENABLED and getattr(c, "_ev_key", None):
+            try:
+                db.save_extract(c._ev_key, d)
+            except Exception:
+                pass
 
     def _run(chunk, per_page):
         """Send one chunk; on 413 (too big for the current model) split in half
@@ -563,7 +760,7 @@ def extract_and_validate_batch(item, candidates: List[PriceCandidate]) -> None:
         if not chunk:
             return
         pages = "\n\n".join(
-            f'--- PAGE idx={i} (url: {c.url}) ---\n{(c.scraped_markdown or "")[:per_page]}'
+            f'--- PAGE idx={i} (url: {c.url}) ---\n{_slice(c, per_page)}'
             for i, c in enumerate(chunk))
         try:
             data = _ask_json(EXTRACT_VALIDATE_PROMPT.format(
@@ -600,10 +797,77 @@ def extract_and_validate_batch(item, candidates: List[PriceCandidate]) -> None:
             except (KeyError, IndexError, ValueError, TypeError):
                 continue
             _apply_ev_result(item, c, d)
+            _save(c, d)
 
-    for start in range(0, len(pending), CHUNK):
-        _run(pending[start:start + CHUNK], PER_PAGE)
+    def _escalate(cands):
+        """Re-check only the low-confidence / unreliable freshly-extracted pages on
+        the scarce 70b model (escalation-only — 8b did the bulk). Skips price_locked
+        pages (price already authoritative) and stops for the run once 70b's daily
+        quota is hit so we don't waste a probe on every remaining item."""
+        if not (ESCALATE_ENABLED and cands) or _esc_state["off"]:
+            return
+        picks = [c for c in cands
+                 if not getattr(c, "price_locked", False)
+                 and (getattr(c, "confidence", 0) < ESCALATE_CONF
+                      or getattr(c, "price_unreliable", False)
+                      or (getattr(c, "criteria", None)
+                          and c.match_type == "exact"
+                          and not all(c.criteria.values())))]
+        if not picks:
+            return
+        for c in picks[:ESCALATE_MAX]:
+            try:
+                data = _ask_json(EXTRACT_VALIDATE_PROMPT.format(
+                    brand=item.brand, product_name=item.product_name,
+                    size_form=item.size_form, variant=item.variant,
+                    pack_qty=item.pack_qty, description=item.description,
+                    pages=f'--- PAGE idx=0 (url: {c.url}) ---\n{_slice(c, PER_PAGE)}'),
+                    max_tokens=3000, force_model=ESCALATE_MODEL)
+            except Exception as e:
+                _esc_state["off"] = True
+                log.info("SKU %s — escalation to %s unavailable (%s); keeping 8b results",
+                         item.schein_sku, ESCALATE_MODEL, e)
+                return
+            for d in _results(data):
+                _apply_ev_result(item, c, d)
+                _save(c, d)
+
+    for start in range(0, len(todo), CHUNK):
+        _run(todo[start:start + CHUNK], PER_PAGE)
+    _escalate(todo)
     return
+
+
+_PAGE_PRICE_RE = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)")
+
+
+def _price_on_page(md: str, price: float, tol: float = 0.02) -> bool:
+    """True if `price` (or a near value) actually appears as a $ token in the
+    scraped markdown. Used to catch prices the model invented or pulled from a
+    related item. Deliberately lenient — returns True when it can't check — so
+    it only ever flags a price, never hides a real one:
+      - no markdown / no price → can't check → True
+      - page has no parseable $ tokens (JS-only price, odd formatting) → True
+      - superscript-cents mangling ("$18¹⁵" → "$18") → whole-dollar match accepted
+    """
+    if not md or not price or price <= 0:
+        return True
+    toks = []
+    for m in _PAGE_PRICE_RE.finditer(md):
+        try:
+            toks.append(float(m.group(1).replace(",", "")))
+        except ValueError:
+            continue
+    if not toks:
+        return True
+    has_fraction = abs(price - round(price)) >= 0.01
+    for t in toks:
+        if abs(t - price) <= max(0.01, tol * price):
+            return True
+        # cents dropped by markdown (superscript) → accept whole-dollar token
+        if has_fraction and abs(t - round(price)) < 0.01:
+            return True
+    return False
 
 
 def _apply_ev_result(item, c, d):
@@ -622,15 +886,22 @@ def _apply_ev_result(item, c, d):
         if toks and not any(w in hay for w in toks):
             c.variant_unverified = True
     price = d.get("price")
-    if isinstance(price, (int, float)):
-        vp = float(price)
-    elif isinstance(price, str):
-        cleaned = price.replace(",", "").replace("$", "").strip()
-        _m = re.search(r"\d+(?:\.\d+)?", cleaned)
-        vp = float(_m.group(0)) if _m else None
+    if getattr(c, "price_locked", False):
+        # Price was set deterministically from the aggregator seller table
+        # (net32 / supplyclinic) in search.py. The LLM still judges variant /
+        # criteria, but MUST NOT overwrite the locked price or its grounding —
+        # the table parser is authoritative here.
+        vp = c.price
     else:
-        vp = None
-    if vp:
+        if isinstance(price, (int, float)):
+            vp = float(price)
+        elif isinstance(price, str):
+            cleaned = price.replace(",", "").replace("$", "").strip()
+            _m = re.search(r"\d+(?:\.\d+)?", cleaned)
+            vp = float(_m.group(0)) if _m else None
+        else:
+            vp = None
+    if vp and not getattr(c, "price_locked", False):
         # Sanity cross-check: the search-snippet price (c.price, from discovery)
         # is an INDEPENDENT signal. If the AI's page price diverges wildly from
         # it, ONE of them is wrong (AI grabbed a banner/related-item price, or
@@ -639,6 +910,16 @@ def _apply_ev_result(item, c, d):
         # trusted "best price" and is clearly flagged for manual verification.
         snippet = c.price if (c.price and c.price > 0) else None
         c.price = vp
+        # GROUNDING: the extracted price must actually appear on the scraped page.
+        # If it doesn't, the model likely grabbed a number from a related item,
+        # banner, or these instructions — flag it (it still shows, with a ⚠, for
+        # manual review) so it can't be presented as a confirmed exact match.
+        md = getattr(c, "scraped_markdown", None)
+        if md and not _price_on_page(md, vp):
+            c.price_unreliable = True
+            c.notes = ((c.notes + " · ") if c.notes else "") + (
+                f"PRICE UNRELIABLE — extracted ${vp:.2f} does not appear on the "
+                f"scraped page; likely a related-item or mis-read price, VERIFY MANUALLY")
         if snippet:
             ratio = vp / snippet
             if ratio > 1.8 or ratio < 0.55:
@@ -646,11 +927,23 @@ def _apply_ev_result(item, c, d):
                 c.notes = ((c.notes + " · ") if c.notes else "") + (
                     f"PRICE UNRELIABLE — AI page price ${vp:.2f} vs listing "
                     f"${snippet:.2f} ({ratio:.1f}×); one is wrong, VERIFY MANUALLY")
+    elif not getattr(c, "price_locked", False):
+        # Groq could not read a price off THIS page. If a search-snippet price is
+        # still attached (set during discovery), it is NOT page-verified — keep it
+        # for display but flag it so it can never be treated as a confirmed exact
+        # match. This is the exact failure mode behind the wrong $9.95 glove row:
+        # the real page price sat past the old truncation window, Groq returned
+        # null, and the unverified snippet price slipped through looking clean.
+        if c.price and c.price > 0 and getattr(c, "scraped_markdown", None):
+            c.price_unreliable = True
+            c.notes = ((c.notes + " · ") if c.notes else "") + (
+                "PRICE UNVERIFIED — no price could be read off the product page; "
+                "value shown is from the search listing only, VERIFY MANUALLY")
     op = d.get("original_price")
     if isinstance(op, str):
         _m = re.search(r"\d+(?:\.\d+)?", op.replace(",", "").replace("$", ""))
         op = float(_m.group(0)) if _m else None
-    if isinstance(op, (int, float)) and op > 0:
+    if isinstance(op, (int, float)) and op > 0 and not getattr(c, "price_locked", False):
         c.original_price = float(op)
         if vp and op > vp:
             pct = round((op - vp) / op * 100)
@@ -661,7 +954,7 @@ def _apply_ev_result(item, c, d):
             c.pack_qty = int(float(d["pack_quantity"]))
         except (TypeError, ValueError):
             pass
-    if d.get("in_stock") is not None:
+    if d.get("in_stock") is not None and not getattr(c, "price_locked", False):
         c.in_stock = bool(d["in_stock"])
     if d.get("minimum_order_condition"):
         c.pack_condition = d["minimum_order_condition"]
