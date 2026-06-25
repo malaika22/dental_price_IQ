@@ -7,6 +7,7 @@ confirmed enter the primary price-match report (PRD 4.5).
 """
 from __future__ import annotations
 import logging
+import os
 import re
 from pathlib import Path
 from typing import List, Optional
@@ -44,9 +45,9 @@ def _coerce_price(c: PriceCandidate) -> None:
 
 
 def price_sane(item: OrderLineItem, c: PriceCandidate) -> bool:
-    _coerce_price(c)
     """Reject obviously-wrong extractions (dimension-like numbers, unit-price
     of a single piece vs a 100-pack, etc.)."""
+    _coerce_price(c)
     if c.price is None or c.price <= 0:
         return False
     # a legitimate competitor price for the same pack rarely sits below 5% or
@@ -124,6 +125,43 @@ _FLAVORS = (
 _NEUTRAL_FLAVORS = {"flavorless", "unflavored", "no-flavor", "no flavor", "plain", "natural"}
 _SHADE_RE = re.compile(r"\b([ABCD][1-4](?:\.5)?)\b")
 _SIZE_RE = re.compile(r"(?:#|\bsize\s+|\bsz\s+|pf171-)(\d{1,2})\b", re.I)
+# A consumable/material order must not match the APPLIER / dispensing gun that
+# shares the product-family name. The Fuji II LC A3 order (a 48/bx shade refill,
+# ~$365) was matched to safco's "Fuji capsule applier" row ($140.49) — a wholly
+# different SKU. These tokens name a tool, not a material; fire only when the
+# candidate has one and the order does not.
+_WRONG_FORM = ("applier", "dispensing gun", "capsule gun", "applicator gun")
+# Henry Schein house brands — sold by no other store, so a different brand on the
+# page is a generic substitute, not the same product.
+_HOUSE_BRANDS = ("criterion", "acclean", "maxima")
+
+
+# Out-of-stock / unavailable phrasing on a product page's buy box. A listing that
+# can't be bought is not a real price and must never headline as the recommended
+# best (e.g. orthazone's "OUT OF STOCK / NO LONGER AVAILABLE" Glide at $43.75
+# undercutting the in-stock crazydental $44.99).
+_OOS_TEXT_RE = re.compile(
+    r"out\s*of\s*stock|out-of-stock|sold\s*out|no\s+longer\s+available|"
+    r"currently\s+unavailable|temporarily\s+unavailable|discontinued|"
+    r"notify\s+me\s+when|back\s*in\s*stock", re.I)
+
+
+def _is_out_of_stock(c: PriceCandidate) -> bool:
+    """True when the candidate's page is out of stock / no longer available.
+    Trusts the LLM's product-specific in_stock=False first; for aggregator pages
+    the seller-table lock already excluded unavailable sellers (in_stock=True), so
+    we don't text-scan those. For normal pages, a strong unavailability phrase in
+    the buy-box head is a backstop."""
+    if getattr(c, "price_locked", False):
+        return getattr(c, "in_stock", None) is False
+    if getattr(c, "in_stock", None) is False:
+        return True
+    # Scan a wide window (not just the first 1200 chars): on nav-heavy pages the
+    # buy-box 'Out of stock' text sits well past a big category sidebar (dds). The
+    # markdown is already cross-sell-stripped, so an unambiguous OOS phrase here is
+    # the product's own status, not a related item's.
+    head = (getattr(c, "scraped_markdown", None) or "")[:6000]
+    return bool(_OOS_TEXT_RE.search(head)) or bool(_OOS_TEXT_RE.search(getattr(c, "pack_condition", "") or ""))
 
 
 def _flavor_in(text: str) -> Optional[str]:
@@ -132,6 +170,24 @@ def _flavor_in(text: str) -> Optional[str]:
         if f in t:
             return f
     return None
+
+
+# Distinctive variant COLORS. Deliberately excludes white/clear/natural/ivory and
+# metals (gold/silver/bronze) — those collide with product names (e.g. "Clinpro
+# Clear", gold-coated burs) and would false-positive. Word-boundary matched.
+_COLORS = ("teal", "turquoise", "aqua", "lavender", "violet", "magenta",
+           "purple", "pink", "orange", "yellow", "green", "blue", "red",
+           "black", "brown", "gray", "grey")
+_COLOR_RE = re.compile(r"\b(" + "|".join(_COLORS) + r")\b", re.I)
+
+
+def _colors_in(text: str) -> set:
+    """Set of distinct palette colors named as standalone tokens (grey→gray)."""
+    out = set()
+    for m in _COLOR_RE.finditer(text or ""):
+        col = m.group(1).lower()
+        out.add("gray" if col == "grey" else col)
+    return out
 
 
 def variant_mismatch(item: OrderLineItem, c: PriceCandidate) -> Optional[str]:
@@ -146,7 +202,7 @@ def variant_mismatch(item: OrderLineItem, c: PriceCandidate) -> Optional[str]:
     # unflavored/no-flavor) and the other is a specific flavor. Neutral-vs-neutral
     # ("No Flavor" vs "Flavorless") are synonyms — NOT a mismatch. Specific-vs-
     # specific is left to the LLM (avoids spearmint-vs-mint false positives).
-    of, cf = _flavor_in(ordered_txt), _flavor_in(cand_name)
+    of, cf = _flavor_in(ordered_txt), _flavor_in(cand_all)   # cand_all incl. URL: 'Unflavored' in the slug
     if of and cf and ((of in _NEUTRAL_FLAVORS) != (cf in _NEUTRAL_FLAVORS)):
         return f"flavor mismatch (ordered '{of}', page '{cf}')"
     # ---- shade (VITA A1..D4) — only when the order specifies one
@@ -157,14 +213,53 @@ def variant_mismatch(item: OrderLineItem, c: PriceCandidate) -> Optional[str]:
     osz, csz = _SIZE_RE.search(ordered_txt), _SIZE_RE.search(cand_all)
     if osz and csz and osz.group(1) != csz.group(1):
         return f"size mismatch (ordered #{osz.group(1)}, page #{csz.group(1)})"
+    # ---- color variant — fire ONLY when BOTH the order and the page name a
+    # palette color AND the two color sets are DISJOINT (share none). Using
+    # disjointness (not first-color) keeps multi-color items safe: ordered
+    # "Blue/Orange" vs a page that also says blue+orange shares colors → no fire,
+    # while ordered "Teal" vs a "Green" page is disjoint → demote. Page side uses
+    # cand_all (name + URL slug) — a wrong color in the slug (".../pink-mixing-tips")
+    # is a reliable variant signal that the extracted name often omits; word
+    # boundaries keep embedded domain colors (e.g. "blueskydental") from matching.
+    ocol, ccol = _colors_in(ordered_txt), _colors_in(cand_all)
+    if ocol and ccol and ocol.isdisjoint(ccol):
+        return (f"color mismatch (ordered {'/'.join(sorted(ocol))}, "
+                f"page {'/'.join(sorted(ccol))})")
+    # ---- product FORM: order is a material/refill, page is a dispensing tool
+    cf_form = next((w for w in _WRONG_FORM if w in cand_name.lower()), None)
+    if cf_form and not any(w in ordered_txt.lower() for w in _WRONG_FORM):
+        return f"form mismatch (page is a '{cf_form}', order is the material)"
+    # ---- HOUSE BRAND: a Henry Schein house brand (Criterion/Acclean/Maxima) is
+    # sold by no one else, so a page that does NOT name that brand is a different
+    # brand's generic substitute (net32 'Aurelia Sonic' gloves for a 'Criterion
+    # N300' order), NOT the same product — keep it out of price_match.
+    ohb = next((h for h in _HOUSE_BRANDS if h in ordered_txt.lower()), None)
+    if ohb and ohb not in cand_all.lower():
+        return f"house-brand mismatch (ordered {ohb.title()}, page is a different brand)"
     return None
 
 
 
 def _brand_ok(item: OrderLineItem, c: PriceCandidate) -> bool:
     """Brand criterion passes when confirmed, or when the reference item has
-    no identifiable brand (generic/house items like 'Barrier Film Blue')."""
-    return bool((c.criteria or {}).get("brand_match")) or not item.brand
+    no identifiable brand (generic/house items like 'Barrier Film Blue').
+
+    Also passes on a brand-LABEL mismatch when the product NAME, size/form AND
+    pack are ALL confirmed: identical product-name + size + pack is the same
+    product, so a differing brand label is almost always a brand-parse artifact
+    (e.g. 'Dynamic Mixing Tips' mis-parsed as Kerr vs the genuine Coltene 6162
+    listing) or a reseller relabel — not a different product. name_match already
+    establishes product identity, so brand shouldn't veto EXACT here. The
+    candidate is still tagged is_generic_equivalent for transparency. Disable
+    via BRAND_LENIENT_ON_FULL_MATCH=0."""
+    crit = c.criteria or {}
+    if bool(crit.get("brand_match")) or not item.brand:
+        return True
+    if (os.environ.get("BRAND_LENIENT_ON_FULL_MATCH", "1") not in ("0", "false", "False")
+            and crit.get("name_match") and crit.get("size_form_match")
+            and crit.get("pack_match")):
+        return True
+    return False
 
 
 def _likely_exact(item: OrderLineItem, c: PriceCandidate) -> bool:
@@ -184,9 +279,33 @@ def _likely_exact(item: OrderLineItem, c: PriceCandidate) -> bool:
     return hits / len(tokens) >= 0.6
 
 
-def _effective_exact(item: OrderLineItem, c: PriceCandidate) -> bool:
+def _size_form_ok(item: OrderLineItem, c: PriceCandidate) -> bool:
+    """Size/form criterion passes when the LLM confirmed it, OR — for a
+    deterministically LOCKED aggregator price (the product parsed off the page's
+    OWN seller table) — when name + pack are confirmed and there is no hard volume
+    conflict. The free-tier model often can't confirm a form detail that the
+    aggregator listing simply doesn't repeat (e.g. 'w/LuerLock' on a 'Dynamic
+    Mixing Tips Yellow 40/Pack' row), which wrongly blocked a genuine exact match.
+    Disable via SIZE_LENIENT_ON_LOCKED=0."""
     crit = c.criteria or {}
-    return (crit.get("name_match") and crit.get("size_form_match")
+    if crit.get("size_form_match"):
+        return True
+    if (os.environ.get("SIZE_LENIENT_ON_LOCKED", "1") not in ("0", "false", "False")
+            and getattr(c, "price_locked", False)
+            and crit.get("name_match") and crit.get("pack_match")
+            and volume_compatible(item, c) is not False):
+        return True
+    return False
+
+
+def _effective_exact(item: OrderLineItem, c: PriceCandidate) -> bool:
+    # A confirmed MPN match is the identical product — exact, unless a hard variant
+    # conflict or pack incompatibility was detected.
+    if (getattr(c, "mpn_confirmed", False) and not getattr(c, "variant_conflict", False)
+            and pack_compatible(item, c) is not False):
+        return True
+    crit = c.criteria or {}
+    return (crit.get("name_match") and _size_form_ok(item, c)
             and crit.get("pack_match") and _brand_ok(item, c))
 
 # --------------------------------------------------------------- pipeline ---
@@ -197,24 +316,66 @@ def process_item(item: OrderLineItem, max_verify: int = 8) -> ItemResult:
     cands, flagged = search.market_sweep(item)
     result.flagged_sites = flagged
 
+    # ISSUE 1: order the scrape queue "likely-lowest-price first" so the per-item
+    # scrape cap spends its slots on the real contenders (not buried past the cap).
+    # An earlier version scraped trusted-suppliers first, which crowded the genuine
+    # cheapest listings out of the cap — the cheapest source the buyer wants then
+    # never got priced. Priority tiers (cap COUNT unchanged, so cost is unchanged):
+    #   0  aggregator pages (net32/supplyclinic) — carry the marketplace lows and
+    #      are deterministically priced (cheap to process); cheapest snippet first
+    #   1  any candidate with a discovery price — cheapest first (the likely winner)
+    #   2  trusted suppliers without a snippet price — price is revealed on-scrape
+    #   3  everything else
+    def _scrape_priority(c):
+        if search._aggregator_domain(c.url):
+            return (0, c.price if (c.price and c.price > 0) else 0.0)
+        if c.price is not None and c.price > 0:
+            return (1, c.price)
+        if search.is_trusted_supplier(c.url):
+            return (2, 0.0)
+        return (3, 0.0)
+    cands.sort(key=_scrape_priority)
+
     # verify the most promising candidates on-page (JS rendered). Batched Groq
     # extraction means prices aren't known mid-loop, so instead of a dynamic
     # early-stop we cap scrapes per item (cheapest-first shortlist preserves the
     # lowest-priced candidates). SCRAPE_CAP_PER_ITEM bounds Firecrawl cost.
     import os as _os
-    scrape_cap = int(_os.environ.get("SCRAPE_CAP_PER_ITEM", "5"))
+    # CHANGE 2: 12 (was 8). On items with many listings the genuinely cheapest
+    # sellers sit at positions 9-12 (e.g. Tray Cover's clinicalsupplycompany /
+    # ismiledental, Criterion's cheap glove sources) and were left "not scraped —
+    # cap reached", so the buyer's lowest price never reached the report. Raising
+    # to 12 reaches them. Cost is bounded: scrape priority puts aggregators +
+    # cheapest first, already-scraped pages are cache-served (0 credits), fresh
+    # scrapes are still capped by FIRECRAWL_MAX_SCRAPES_PER_RUN, and Groq stays
+    # bounded by GROQ_EXTRACT_CAP (extra pages get the free regex fallback).
+    # Tune via SCRAPE_CAP_PER_ITEM (lower it to spend fewer Firecrawl credits).
+    # CHANGE #1: decouple FREE scraping from PAID Firecrawl. SCRAPE_CAP_PER_ITEM now
+    # bounds only PAID Firecrawl scrapes; free scrapes (cache hit + free HTTP
+    # structured fetch) cost $0 and are NOT capped — so every free-fetchable
+    # supplier page gets priced, while Firecrawl is reserved for the cheapest
+    # JS/aggregator pages that need it. FREE_FETCH_MAX bounds total candidates
+    # attempted per item (the free-fetch HTTP GETs add latency), so a 40-URL item
+    # doesn't free-fetch all 40.
+    scrape_cap = int(_os.environ.get("SCRAPE_CAP_PER_ITEM", "12"))   # PAID Firecrawl cap
+    free_max = int(_os.environ.get("FREE_FETCH_MAX", "24"))          # total candidates attempted
     verified: List[PriceCandidate] = []
     exacts_found = 0
     verified_ok = 0
-    scraped_n = 0
-    for c in cands:
-        if scraped_n >= scrape_cap:
-            c.notes = c.notes or "not scraped — per-item scrape cap reached"
+    paid_n = 0
+    for idx, c in enumerate(cands):
+        if idx >= free_max:
+            c.notes = c.notes or "not scraped — per-item coverage cap reached"
             result.candidates.append(c)
             continue
         c._ordered_variant = item.variant or ""
-        c = search.firecrawl_verify(c, sku=sku)   # markdown scrape (1 credit); no price yet
-        scraped_n += 1
+        c._order_mpn = item.mpn or ""        # variant-matrix pages price by MPN→SKU
+        c._order_sku = item.schein_sku or "" # …or by Henry Schein SKU (afteractionmedical)
+        c._order_sizeform = item.size_form or ""   # …or by size in the variant title
+        c._order_desc = item.description or ""      # (33oz/Bt → 'Bottle 33oz' variant)
+        c = search.firecrawl_verify(c, sku=sku, allow_paid=(paid_n < scrape_cap))
+        if getattr(c, "_paid_scrape", False):     # a real Firecrawl scrape was spent
+            paid_n += 1
         verified.append(c)
 
     # ONE Groq call per item that BOTH extracts pricing AND judges match criteria
@@ -256,6 +417,10 @@ def process_item(item: OrderLineItem, max_verify: int = 8) -> ItemResult:
                 c.match_type = "approximate"
                 log.info("SKU %s — demoted %s to approximate (pack %s vs ordered %s)",
                          sku, c.source_site, c.pack_qty, item.pack_qty)
+            # NOTE: a GROSS pack mismatch (≥3×) is hard-excluded in the standalone
+            # pack-backstop pass below (which also covers LLM-rejected candidates).
+            # Here we only demote + annotate so a MILD difference (40 vs 50 tips)
+            # still shows as a like-for-like approximate option.
             c.notes = ((c.notes + " · ") if c.notes else "") + (
                 f"PACK MISMATCH — page is {c.pack_qty}/pack but ordered "
                 f"{item.pack_qty}/pack; treated as approximate, VERIFY")
@@ -264,22 +429,49 @@ def process_item(item: OrderLineItem, max_verify: int = 8) -> ItemResult:
         elif volume_compatible(item, c) is False:
             c.match_type = "rejected"
             c.rejected_reason = "volume/size mismatch after normalization"
-        # VARIANT BACKSTOP: deterministic flavor/shade/size check — demote (never
-        # reject) a candidate whose variant conflicts with the order, so a
-        # wrong-flavor / wrong-shade / wrong-size page can't headline as EXACT.
-        if c.match_type != "rejected":
-            vm = variant_mismatch(item, c)
-            if vm:
-                c.variant_unverified = True
-                if c.match_type == "exact":
-                    c.match_type = "approximate"
-                c.notes = ((c.notes + " · ") if c.notes else "") + (
-                    f"VARIANT MISMATCH — {vm}; treated as approximate, VERIFY")
-                log.info("SKU %s — %s variant backstop: %s", sku, c.source_site, vm)
         if c.scraped_product_name is not None:
             verified_ok += 1
             if _likely_exact(item, c):
                 exacts_found += 1
+
+    # VARIANT BACKSTOP: deterministic flavor/shade/size/color/house-brand check, in
+    # its OWN pass over EVERY candidate. It cannot live in the demotion loop above —
+    # that loop `continue`s on already-rejected candidates, so a wrong product the
+    # LLM rejected for some OTHER reason (net32 'Aurelia Sonic' rejected as
+    # off-brand, but still the cheapest) would never get variant_conflict set and
+    # would leak into price_match as a "POSSIBLE" option. Setting variant_conflict
+    # here routes it to the alternate sheet. We never relax a verdict — only flag.
+    for c in verified:
+        if not getattr(c, "variant_conflict", False):
+            vm = variant_mismatch(item, c)
+            if vm:
+                c.variant_unverified = True
+                c.variant_conflict = True   # wrong color/shade/size/flavor/brand → keep out of price_match
+                if c.match_type == "exact":
+                    c.match_type = "approximate"
+                c.notes = ((c.notes + " · ") if c.notes else "") + (
+                    f"VARIANT MISMATCH — {vm}; wrong variant, routed to alternate, VERIFY")
+                log.info("SKU %s — %s variant backstop: %s", sku, c.source_site, vm)
+        # PACK BACKSTOP — same reason this is a SEPARATE pass: the demotion loop
+        # skips already-rejected candidates, so a wrong-pack listing the LLM
+        # rejected for pack reasons (mfidistribution's 10-count at $14 for a 300/Bx
+        # order) never got pack_conflict and could still UNDERCUT the correct price.
+        # HARD-exclude only on a GROSS pack ratio (≥3×) — a genuinely different unit
+        # (10 vs 300). Mild differences (40 vs 50 tips, 1 vs 2 packs) are real
+        # like-for-like alternatives and stay as APPROXIMATE rows with a pack note
+        # (handled in the demotion loop above) so a correct match isn't nuked.
+        if (not getattr(c, "pack_conflict", False) and pack_compatible(item, c) is False
+                and item.pack_qty and c.pack_qty):
+            ratio = max(item.pack_qty, c.pack_qty) / max(1, min(item.pack_qty, c.pack_qty))
+            if ratio >= 3:
+                c.pack_conflict = True
+                if not (c.notes and "PACK MISMATCH" in c.notes):
+                    c.notes = ((c.notes + " · ") if c.notes else "") + (
+                        f"PACK MISMATCH — page is {c.pack_qty}/pack but ordered "
+                        f"{item.pack_qty}/pack ({ratio:.0f}× off); different unit, "
+                        f"routed to alternate")
+                log.info("SKU %s — %s pack backstop: %s/pack vs ordered %s (%.0f× off)",
+                         sku, c.source_site, c.pack_qty, item.pack_qty, ratio)
 
     # consistency guard: Groq may not call something exact its own criteria deny
     for c in verified:
@@ -302,6 +494,51 @@ def process_item(item: OrderLineItem, max_verify: int = 8) -> ItemResult:
         if (item.brand and crit.get("name_match") and crit.get("size_form_match")
                 and crit.get("pack_match") and not crit.get("brand_match")):
             c.is_generic_equivalent = True
+
+    # DETERMINISTIC MPN CONFIRMATION: the order's MPN appearing in a candidate's
+    # URL or product name is definitive product identity — the SAME MPN is the
+    # SAME product. This overrides the free model's unreliable name/size criteria
+    # on aggregator-LOCKED pages, where the cheapest correct product was wrongly
+    # excluded from price_match (supplyclinic Fuji A3.5 has '425004' in its URL at
+    # the lowest price, yet a pricier normal-store match headlined). Sets name_match
+    # so the strict gate passes; variant_conflict (a DETECTED wrong shade/color)
+    # still blocks, so this can't promote a genuinely-different variant.
+    if getattr(item, "mpn", None):
+        _mnorm = re.sub(r"[^a-z0-9]", "", str(item.mpn).lower())
+        if len(_mnorm) >= 5:
+            for c in verified:
+                hay = re.sub(r"[^a-z0-9]", "", (
+                    (c.url or "") + " " + (getattr(c, "scraped_product_name", "") or "")
+                    + " " + (c.title or "")).lower())
+                if _mnorm in hay and not getattr(c, "variant_conflict", False):
+                    c.mpn_confirmed = True
+                    crit = dict(c.criteria or {})
+                    crit["name_match"] = True
+                    c.criteria = crit
+                    log.info("SKU %s — %s MPN-confirmed (%s in listing) → price_match-eligible",
+                             sku, c.source_site, item.mpn)
+
+    # LOCKED-PRICE CONFIRMATION: aggregator-locked prices (the product parsed off
+    # the page's own seller table) often get NO LLM criteria and score 0%, dropping
+    # the cheapest correct product out of price_match (Genie Magic Mix supplyclinic,
+    # which has no MPN to anchor on). When such a locked price is _likely_exact
+    # (strong token overlap + pack-compatible) and has no hard variant conflict,
+    # confirm its name so the strict gate passes — same principle as MPN-confirm.
+    for c in verified:
+        if (getattr(c, "price_locked", False) and not getattr(c, "variant_conflict", False)
+                and not (c.criteria or {}).get("name_match") and _likely_exact(item, c)):
+            crit = dict(c.criteria or {})
+            crit["name_match"] = True
+            c.criteria = crit
+            log.info("SKU %s — %s locked-price token-confirmed → price_match-eligible",
+                     sku, c.source_site)
+
+    # MPN learning/validation from the real pages (confirms a seed MPN, learns new
+    # ones, or overrides a wrong seed by consensus) — persisted for the next run.
+    try:
+        learn_mpn_from_pages(item, verified)
+    except Exception:
+        log.debug("SKU %s — MPN page-consensus skipped", sku)
 
     result.candidates.extend(verified)
 
@@ -338,10 +575,23 @@ def process_item(item: OrderLineItem, max_verify: int = 8) -> ItemResult:
     # page-verified sources for this item (itself excluded so it can't dampen
     # the median); if it sits well below them, the seller-table parse is suspect
     # — flag UNRELIABLE (keeps it out of best_exact) rather than trusting it.
-    lock_ratio = float(_os2.environ.get("LOCK_OUTLIER_RATIO", "0.6"))
+    # NOTE: net32 is a genuine discount marketplace — a CaviWipes canister really
+    # is ~$10 there vs ~$16-18 at retail (ratio ~0.57). The old 0.6 floor wrongly
+    # demoted those legit lows once the parser started returning accurate prices.
+    # 0.5 still catches wrong-PRODUCT locks (Magic Mix $174 vs $581 median = 0.30,
+    # mixing-tips $23 vs $80 = 0.29) which are the real failure mode.
+    lock_ratio = float(_os2.environ.get("LOCK_OUTLIER_RATIO", "0.5"))
     for c in verified:
         if not (getattr(c, "price_locked", False) and c.price and c.price > 0
                 and not getattr(c, "price_unreliable", False)):
+            continue
+        # ISSUE 2: do NOT suppress a locked price whose four criteria are ALL
+        # confirmed. That is the RIGHT product on a discount marketplace, so being
+        # half of retail peers is EXPECTED, not suspect (e.g. supplyclinic Teal
+        # mixing tips $34.95 vs ~$76 retail — the genuine low the buyer wants). The
+        # guard still fires on wrong-PRODUCT locks (Magic Mix $174 vs $581), because
+        # those carry a name/size mismatch and so fail _effective_exact below.
+        if _effective_exact(item, c):
             continue
         peers = sorted(o.price for o in verified
                        if o is not c and o.price and o.price > 0
@@ -359,17 +609,232 @@ def process_item(item: OrderLineItem, max_verify: int = 8) -> ItemResult:
             log.info("SKU %s — locked price %s $%.2f flagged vs peer median $%.2f",
                      sku, c.source_site, c.price, peer_med)
 
+    # UNVERIFIED-SNIPPET-PRICE GUARD: when the scraped page body carries NO price
+    # at all — a JS-rendered price we couldn't read (e.g. dentalcity's $294.99
+    # renders client-side; with Firecrawl exhausted we only got the static shell)
+    # — the only number left on the candidate is the stale SEARCH-SNIPPET price,
+    # which can be a wrong variant or related item (dentalcity $24.95 vs the real
+    # $294.99). Unless the price is a trusted structured single-offer or an
+    # aggregator-locked value, a page that shows no price must never headline as
+    # EXACT — flag it UNRELIABLE so it can't be the recommended best.
+    _price_tok = re.compile(r"\$\s?\d")
+    for c in verified:
+        if (c.price and c.price > 0
+                and not getattr(c, "price_structured", False)
+                and not getattr(c, "price_locked", False)
+                and not getattr(c, "price_unreliable", False)
+                and isinstance(c.scraped_markdown, str)
+                and len(c.scraped_markdown) > 200
+                and not _price_tok.search(c.scraped_markdown)):
+            c.price_unreliable = True
+            c.notes = ((c.notes + " · ") if c.notes else "") + (
+                "PRICE UNVERIFIED — the scraped page shows no price (likely "
+                "JS-rendered); this figure is the search-snippet price only and "
+                "may be a wrong variant, VERIFY on the page")
+            log.info("SKU %s — %s price $%.2f flagged UNVERIFIED (scraped page body "
+                     "has no price)", sku, c.source_site, c.price)
+
+    # OUT-OF-STOCK GUARD: a listing that is out of stock / no longer available is
+    # not a buyable price, so it must never headline as the recommended best — it
+    # would otherwise undercut a genuinely in-stock seller (orthazone's "NO LONGER
+    # AVAILABLE" Glide $43.75 beating in-stock crazydental $44.99). Flag + demote
+    # exact→approximate; it still appears as a clearly-labeled reference option.
+    for c in verified:
+        if c.match_type == "rejected":
+            continue
+        if _is_out_of_stock(c):
+            c.out_of_stock = True
+            if c.match_type == "exact":
+                c.match_type = "approximate"
+            c.notes = ((c.notes + " · ") if c.notes else "") + (
+                "OUT OF STOCK / no longer available on this page — not a buyable "
+                "price; shown for reference only, VERIFY availability")
+            log.info("SKU %s — %s flagged OUT OF STOCK (demoted; won't headline)",
+                     sku, c.source_site)
+
     # Best exact: all four criteria true. Pack-mismatched candidates can NEVER
     # be primary, regardless of how cheap they are — they go to evidence with
-    # their condition shown (PRD 4.5 / 4.6).
+    # their condition shown (PRD 4.5 / 4.6). Out-of-stock listings are excluded.
     exacts = [c for c in verified
               if c.match_type == "exact" and _effective_exact(item, c)
               and pack_compatible(item, c) is not False
               and not getattr(c, "price_unreliable", False)
+              and not getattr(c, "out_of_stock", False)
               and c.price is not None]
+
+    # BEST-EXACT PEER SANITY: the cheapest exact can still be a gross misextraction
+    # the intra-item median guard above missed when smaller-pack candidates dragged
+    # that median down (Clinpro $24.95 headlined EXACT while the real same-product
+    # 100-pack was $241 — median was a 30-pack $36, so $24.95 didn't look low).
+    # Compare the chosen best ONLY against its effective-exact peers (same product,
+    # right pack — a clean baseline, no pack-mismatched dilution) with a TIGHTER
+    # ratio than the generic guard: genuine discount-marketplace lows (Teal $34.95
+    # vs $76 = .46) survive, only ~4-10x errors (Clinpro .10) are demoted. The
+    # demoted price stays as a ⚠ UNVERIFIED option; the next-cheapest exact heads.
+    best_ratio = float(_os2.environ.get("BEST_OUTLIER_RATIO", "0.25"))
+    exacts = sorted(exacts, key=lambda c: c.price)
+    while exacts:
+        cand = exacts[0]
+        peers = sorted(o.price for o in exacts[1:]
+                       if o.price and o.price > 0 and price_sane(item, o))
+        if peers and cand.price < best_ratio * peers[len(peers) // 2]:
+            peer_med = peers[len(peers) // 2]
+            cand.price_unreliable = True
+            cand.notes = ((cand.notes + " · ") if cand.notes else "") + (
+                f"PRICE UNRELIABLE — ${cand.price:.2f} is far below the verified "
+                f"same-product sellers (median ${peer_med:.2f}); almost certainly a "
+                f"related-item or wrong-pack price, VERIFY before using")
+            log.info("SKU %s — best-exact %s $%.2f demoted vs exact-peer median "
+                     "$%.2f (ratio %.2f)", sku, cand.source_site, cand.price,
+                     peer_med, cand.price / peer_med)
+            exacts.pop(0)
+            continue
+        break
     if exacts:
-        result.best_exact = min(exacts, key=lambda c: c.price)
+        result.best_exact = exacts[0]
     return result
+
+
+# ------------------------------------------------------------------- MPN ----
+
+def load_mpn_table(config_dir: Path) -> dict:
+    """Client-maintained SKU→MPN map (config/mpn_table.txt), pipe-delimited:
+       HENRY_SCHEIN_SKU | MPN | manufacturer (optional) | note (optional)
+    Henry Schein descriptions rarely print the manufacturer part number, so this
+    table supplies it per SKU — the single most precise match signal."""
+    f = config_dir / "mpn_table.txt"
+    table: dict = {}
+    if not f.exists():
+        return table
+    for line in f.read_text().splitlines():
+        line = line.split("#")[0].strip()          # trailing # comment
+        if not line:
+            continue
+        parts = [p.strip() for p in line.split("|")]
+        if len(parts) < 2 or not parts[0] or not parts[1]:
+            continue
+        table[parts[0]] = (parts[1], parts[2] if len(parts) > 2 and parts[2] else None)
+    return table
+
+
+_MPN_NORM_RE = re.compile(r"[^A-Z0-9]")
+
+
+def _norm_mpn(s) -> str:
+    return _MPN_NORM_RE.sub("", str(s or "").upper())
+
+
+# Patterns where a product page DECLARES its manufacturer part number.
+_PAGE_MPN_RES = (
+    re.compile(r"manu(?:facturer)?\s*(?:code|part(?:\s*(?:#|no\.?|number))?)\s*[:#]?\s*"
+               r"([A-Za-z0-9][A-Za-z0-9./\-]{3,})", re.I),
+    re.compile(r"mfg\.?\s*part\s*(?:#|no\.?|number)?\s*[:#]?\s*([A-Za-z0-9][A-Za-z0-9./\-]{3,})", re.I),
+    re.compile(r"\bMPN\b\s*[:#]?\s*([A-Za-z0-9][A-Za-z0-9./\-]{3,})", re.I),
+)
+
+
+def _page_mpns(c) -> list:
+    """Manufacturer part numbers a candidate page explicitly declares (original form)."""
+    text = " ".join(p for p in (getattr(c, "scraped_product_name", None),
+                                (getattr(c, "scraped_markdown", None) or "")[:4000]) if p)
+    out = []
+    for rx in _PAGE_MPN_RES:
+        out.extend(m.group(1) for m in rx.finditer(text))
+    return out
+
+
+def _page_declares(c, mpn) -> bool:
+    """True if the (normalized) MPN literally appears anywhere on the candidate."""
+    n = _norm_mpn(mpn)
+    if len(n) < 4:
+        return False
+    hay = _norm_mpn(" ".join(p for p in (
+        getattr(c, "scraped_product_name", None), getattr(c, "title", None),
+        getattr(c, "url", None), (getattr(c, "scraped_markdown", None) or "")[:4000]) if p))
+    return n in hay
+
+
+def seed_and_apply_mpn(conn, items, config_dir: Path) -> int:
+    """Seed the MPN store from config/mpn_table.txt (manual), run the internal-
+    consistency check, then set each item's mpn / mpn_query / mpn_verified from the
+    store. An MPN is only mpn_verified (usable to REJECT conflicting listings) once
+    page-consensus has confirmed it; an unconfirmed seed is a DISCOVERY HINT only,
+    so a wrong manual MPN can't wrongly reject a correct page. Returns # enriched."""
+    from . import db
+    store = db.get_mpn_store(conn) if conn else {}
+    # seed manual entries not already in the store
+    if conn:
+        for sku, (mpn, mfr) in load_mpn_table(config_dir).items():
+            if sku not in store:
+                db.upsert_mpn(conn, sku, mpn, mfr, source="manual", status="seed")
+        store = db.get_mpn_store(conn)
+
+    # VALIDATION 1 — internal consistency: a manual MPN shared across DIFFERENT
+    # products in this order (e.g. Fuji A3 and A3.5 both '425003') is an obvious
+    # sheet error → mark both 'conflict' so neither is trusted for rejection.
+    by_mpn: dict = {}
+    for it in items:
+        rec = store.get(it.schein_sku)
+        if rec and rec.get("mpn"):
+            by_mpn.setdefault(_norm_mpn(rec["mpn"]), []).append(it)
+    for _nm, its in by_mpn.items():
+        if len(its) > 1 and len({i.description for i in its}) > 1:
+            for i in its:
+                rec = store.get(i.schein_sku)
+                if rec and rec.get("status") == "seed" and conn:
+                    db.upsert_mpn(conn, i.schein_sku, rec["mpn"], rec["manufacturer"],
+                                  source=rec["source"], status="conflict")
+                    rec["status"] = "conflict"
+                    log.warning("MPN check — SKU %s MPN %s also used for a DIFFERENT "
+                                "product in this order; marking SUSPECT (not used to reject)",
+                                i.schein_sku, rec["mpn"])
+
+    n = 0
+    for it in items:
+        rec = store.get(it.schein_sku)
+        if not rec or not rec.get("mpn"):
+            continue
+        it.mpn = rec["mpn"]
+        prod = (it.product_name or it.description or "").strip()
+        it.mpn_query = " ".join(p for p in (rec.get("manufacturer") or it.brand or "",
+                                            rec["mpn"], prod) if p).strip() or None
+        # VALIDATION 2 gate: only a page-confirmed ('verified') MPN may REJECT a
+        # listing. Seed/conflict → discovery hint only (matching ignores it).
+        it.mpn_verified = rec.get("status") == "verified"
+        n += 1
+    return n
+
+
+def learn_mpn_from_pages(item, candidates) -> None:
+    """Page-consensus (VALIDATION 2 + dynamic fill): from the candidates the model
+    confirmed as the SAME product, (a) if a page declares the stored MPN → mark it
+    verified (the sheet was right), else (b) if ≥2 same-product pages agree on a
+    part number → store THAT as the verified MPN (learns new SKUs and overrides a
+    wrong seed). Thread-safe immediate write so the next run reuses it."""
+    from . import db
+    good = [c for c in candidates
+            if (c.criteria or {}).get("name_match") and getattr(c, "scraped_product_name", None)]
+    if not good:
+        return
+    stored = getattr(item, "mpn", None)
+    if stored and any(_page_declares(c, stored) for c in good):
+        db.upsert_mpn_now(item.schein_sku, stored, source="page-confirmed", status="verified")
+        return
+    from collections import Counter
+    cnt: Counter = Counter()
+    rep: dict = {}
+    for c in good:
+        for m in _page_mpns(c):
+            nm = _norm_mpn(m)
+            if len(nm) >= 4:
+                cnt[nm] += 1
+                rep.setdefault(nm, m)
+    if cnt:
+        nm, k = cnt.most_common(1)[0]
+        if k >= 2:
+            db.upsert_mpn_now(item.schein_sku, rep[nm], source="page-consensus", status="verified")
+            log.info("SKU %s — learned MPN %s by page consensus (%d same-product pages agree)",
+                     item.schein_sku, rep[nm], k)
 
 
 # ------------------------------------------------------------ equivalency ---

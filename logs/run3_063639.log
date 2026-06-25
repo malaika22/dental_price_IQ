@@ -1,0 +1,843 @@
+/Users/Malaika-mac/Downloads/dental_price_intel/.venv/lib/python3.9/site-packages/urllib3/__init__.py:35: NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'. See: https://github.com/urllib3/urllib3/issues/3020
+  warnings.warn(
+INFO pipeline: Pipeline starting — pdf=/Users/Malaika-mac/Downloads/Order - 052826-1098250, McGraw Jr, Robert Paul.pdf skip_search=False parallel=1
+INFO app.parser: Order - 052826-1098250, McGraw Jr, Robert Paul.pdf: 25 items, total reconciles at $10610.55
+INFO app.search: Firecrawl budget reset (max 150 scrapes, 1000 run credits)
+INFO app.search: Discovery cache PURGE (3250498,2223852,1126830,1126831,3333466,3333468): removed 6 discovery row(s) and 60 cached page(s) — these will be re-discovered this run
+INFO app.search: Discovery cache: 19 SKU(s) loaded (<7 days old) — repeat items will skip re-discovery
+INFO pipeline: Parsed 25 items from Order - 052826-1098250, McGraw Jr, Robert Paul.pdf (ref OR202605280844126040)
+INFO httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/openai/chat/completions "HTTP/1.1 200 OK"
+INFO httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/openai/chat/completions "HTTP/1.1 200 OK"
+INFO httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/openai/chat/completions "HTTP/1.1 200 OK"
+INFO pipeline: Groq parse complete — 25 item(s)
+INFO pipeline: MPN store — applied 24 item(s) (verified MPNs reject conflicts; seeds are discovery hints until page-confirmed)
+INFO pipeline: Stage 1 — processing 25 item(s) with 1 worker(s), 300s cap per item
+INFO app.search: SKU 8889527 — market sweep starting (3 queries: Coltene ParaPost Fiber Lux Red PF171-5.0 5/Pk | fiber post red PF171-5.0 5 pack | Coltene PF1715 ParaPost Fiber Lux)
+INFO app.search: SKU 2013820 — market sweep starting (3 queries: Dentsply Sirona Mity K-Files 25mm #10 6/Pk | dental K-Files 25mm #10 6 pack | Dentsply Sirona 671131 Mity K-Files)
+INFO app.search: SKU 8889527 — seeded 3 known-good URL(s) from seed_urls.txt
+INFO app.search: SKU 2013820 — seeded 3 known-good URL(s) from seed_urls.txt
+INFO app.search: SKU 8889527 — discovery CACHE HIT: 33 known URL(s), skipping search (scrapes still run fresh)
+INFO app.search: SKU 2013820 — discovery CACHE HIT: 20 known URL(s), skipping search (scrapes still run fresh)
+INFO app.search: SKU 8889527 — scraping supplyclinic.com (https://www.supplyclinic.com/items/parapost-fiber-lux-refill-size-5-5-pack-coltene-whaledent-pf1715) …
+INFO app.search: SKU 2013820 — scraping supplyclinic.com (https://www.supplyclinic.com/items/mity-k-files-nt-25mm-10-6-pk-js-2k5010) …
+INFO app.search: AGG_DEBUG wrote supplyclinic.com_www-supplyclinic-com-items-mity-k-files-nt-25mm-10-6-pk-js-2_c782315032.{json,section.md,full.md} (returned $22.3)
+INFO app.search: SKU 2013820 — aggregator price LOCKED $22.30 (1 sellers, badge_match=False) — https://www.supplyclinic.com/items/mity-k-files-nt-25mm-10-6
+INFO app.search: SKU 2013820 — scrape SUCCESS (markdown, stored 2673 of 2673 chars) — https://www.supplyclinic.com/items/mity-k-files-nt-25mm-10-6
+INFO app.search: SKU 2013820 — scraping net32.com (https://www.net32.com/ec/sybronendo-kfiles-25mm-10-6-stainless-steel-d-26642) …
+INFO app.search: AGG_DEBUG wrote supplyclinic.com_www-supplyclinic-com-items-parapost-fiber-lux-refill-size-5_4f53a35d31.{json,section.md,full.md} (returned $71.64)
+INFO app.search: SKU 8889527 — aggregator price LOCKED $71.64 (4 sellers, badge_match=False) — https://www.supplyclinic.com/items/parapost-fiber-lux-refill
+INFO app.search: SKU 8889527 — scrape SUCCESS (markdown, stored 7656 of 7656 chars) — https://www.supplyclinic.com/items/parapost-fiber-lux-refill
+INFO app.search: SKU 8889527 — scrape CACHE HIT (3740 chars, 0 credits) — https://ansondental.com/products/coltene-parapost-fiber-lux?
+INFO app.search: SKU 8889527 — scrape CACHE HIT (4716 chars, 0 credits) — https://usdentaldepot.com/parapost-fiber-lux-posts-size-5-co
+INFO app.search: SKU 8889527 — scrape CACHE HIT (10000 chars, 0 credits) — https://www.tdsc.com/All-Categories/Dental-Supplies/Endodont
+INFO app.search: SKU 8889527 — scraping darbydental.com (https://www.darbydental.com/9062590.html) …
+INFO app.search: AGG_DEBUG wrote net32.com_www-net32-com-ec-sybronendo-kfiles-25mm-10-6-stainless-steel_b508544ffb.{json,section.md,full.md} (returned $10.65)
+INFO app.search: SKU 2013820 — aggregator price LOCKED $10.65 (12 sellers, badge_match=True) — https://www.net32.com/ec/sybronendo-kfiles-25mm-10-6-stainle
+INFO app.search: SKU 2013820 — scrape SUCCESS (markdown, stored 10000 of 117343 chars) — https://www.net32.com/ec/sybronendo-kfiles-25mm-10-6-stainle
+INFO app.search: SKU 2013820 — scraping net32.com (https://www.net32.com/ec/sybronendo-kfiles-25mm-4580-assorted-6-stainless-d-26612) …
+WARNING app.search: SKU 8889527 — scrape: login wall (price gated — 'login to see price') at https://www.darbydental.com/9062590.html
+INFO app.search: SKU 8889527 — scrape CACHE HIT (4902 chars, 0 credits) — https://www.safcodental.com/product/parapost-reg-fiber-lux
+WARNING app.search: SKU 8889527 — scrape: login wall (price gated, cached) at https://www.scottsdental.com/parapost-fiber-lux.html
+INFO app.search: SKU 8889527 — scrape CACHE HIT (5366 chars, 0 credits) — https://www.dentalcity.com/product/1588/coltene-parapost-fib
+INFO app.search: SKU 8889527 — scraping orthazone.com (https://www.orthazone.com/209-fdt-part-fiber-lux-posts-refill-45-blue-6168) …
+INFO app.search: AGG_DEBUG wrote net32.com_www-net32-com-ec-sybronendo-kfiles-25mm-4580-assorted-6-stai_f0fbf6832e.{json,section.md,full.md} (returned $25.05)
+INFO app.search: SKU 2013820 — aggregator price LOCKED $25.05 (5 sellers, badge_match=True) — https://www.net32.com/ec/sybronendo-kfiles-25mm-4580-assorte
+INFO app.search: SKU 2013820 — scrape SUCCESS (markdown, stored 10000 of 128652 chars) — https://www.net32.com/ec/sybronendo-kfiles-25mm-4580-assorte
+INFO app.search: SKU 2013820 — scrape CACHE HIT (5045 chars, 0 credits) — https://thedentalmarket.net/endodontic/nickel-titanium-reame
+INFO app.search: SKU 2013820 — scrape CACHE HIT (10000 chars, 0 credits) — https://www.tdsc.com/All-Categories/Dental-Supplies/Endodont
+INFO app.search: SKU 2013820 — scrape CACHE HIT (6519 chars, 0 credits) — https://myddssupply.com/products/25mm-size-10-h-files-endodo
+INFO app.search: SKU 2013820 — scrape CACHE HIT (4056 chars, 0 credits) — https://dentalcity.com/product/7571/kerr-k-files-25mm
+INFO app.search: SKU 2013820 — scrape CACHE HIT (9752 chars, 0 credits) — https://www.practicon.com/kerr-k-files-25mm-size-35-green-6-
+INFO app.search: SKU 2013820 — scrape CACHE HIT (3704 chars, 0 credits) — https://www.safcodental.com/product/kerr-k-files-sup-trade-s
+INFO app.search: SKU 2013820 — scraping midwestdental.com (https://midwestdental.com/k-files/_item/k-files-kerr-endodontics-25mm-length-files-70-25mm-6pkg) …
+WARNING app.search: SKU 2013820 — scrape: login wall (price gated — 'login to see price') at https://midwestdental.com/k-files/_item/k-files-kerr-endodontics-25mm-length-fil
+INFO app.search: SKU 2013820 — scrape CACHE HIT (4130 chars, 0 credits) — https://dentalcity.com/product/2284/dental-city-dental-k-fil
+INFO app.search: SKU 2013820 — scrape CACHE HIT (7859 chars, 0 credits) — https://www.skydentalsupply.com/k-file-size-25mm-premier.htm
+INFO app.search: SKU 2013820 — scrape CACHE HIT (10000 chars, 0 credits) — https://www.dentalsky.com/kerr-k-files-25mm-no-10.html
+INFO app.search: SKU 2013820 — scrape CACHE HIT (3053 chars, 0 credits) — https://angeldentalsupply.com/product/k-files-25mm-6pk-mani/
+INFO app.ai: SKU 2013820 — 13 scraped page(s): 11 cache hit(s), 2 to extract
+INFO app.search: SKU 8889527 — oversized page (209934 chars) — almost certainly a category/search listing, not a product page; skipping extraction
+INFO app.search: SKU 8889527 — scraping darbydental.com (https://www.darbydental.com/9062584.html) …
+INFO httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/openai/chat/completions "HTTP/1.1 200 OK"
+INFO app.matcher: SKU 2013820 — flagged myddssupply.com $3.99 as low outlier vs median $11.49
+INFO app.search: SKU 1392761 — market sweep starting (3 queries: Henry Schein S3+ Face Masks L3 Black 50/Bx | dental face masks level 3 black 50 box | Henry Schein S3160K S3+ Face Masks)
+INFO app.search: SKU 1392761 — seeded 2 known-good URL(s) from seed_urls.txt
+INFO app.search: SKU 1392761 — discovery CACHE HIT: 24 known URL(s), skipping search (scrapes still run fresh)
+INFO app.search: SKU 1392761 — scraping supplyclinic.com (https://www.supplyclinic.com/items/cranberry-s3-face-mask-blue-level-3-50-bx-pro2-solutions-s3160b) …
+WARNING app.search: SKU 8889527 — scrape: login wall (price gated — 'login to see price') at https://www.darbydental.com/9062584.html
+INFO app.search: SKU 8889527 — scrape CACHE HIT (10000 chars, 0 credits) — https://ddsdentalsupplies.com/wdt-pf18155/
+INFO app.search: SKU 8889527 — scraping pattersondental.com (https://www.pattersondental.com/en-CA/Supplies/pins-posts/posts-metal-free/parapost-fiber-lux-transl) …
+INFO app.search: AGG_DEBUG wrote supplyclinic.com_www-supplyclinic-com-items-cranberry-s3-face-mask-blue-level_f500a6533e.{json,section.md,full.md} (returned $7.93)
+INFO app.search: SKU 1392761 — aggregator price LOCKED $7.93 (4 sellers, badge_match=False) — https://www.supplyclinic.com/items/cranberry-s3-face-mask-bl
+INFO app.search: SKU 1392761 — scrape SUCCESS (markdown, stored 6637 of 6637 chars) — https://www.supplyclinic.com/items/cranberry-s3-face-mask-bl
+INFO app.search: SKU 1392761 — scraping net32.com (https://www.net32.com/ec/cranberry-s3-earloop-masks-d-168843) …
+WARNING app.search: SKU 8889527 — scrape: login wall (no public price shown) at https://www.pattersondental.com/en-CA/Supplies/pins-posts/posts-metal-free/parap
+INFO app.search: SKU 8889527 — scrape CACHE HIT (10000 chars, 0 credits) — https://www.amtouch.com/shop-by-category/pins-posts/coltene-
+INFO app.search: SKU 8889527 — scrape CACHE HIT (5732 chars, 0 credits) — https://www.skydentalsupply.com/parapost-fiber-lux-10.htm
+INFO app.ai: SKU 8889527 — 9 scraped page(s): 9 cache hit(s), 0 to extract
+INFO app.matcher: SKU 8889527 — orthazone.com variant backstop: color mismatch (ordered red, page blue)
+INFO app.matcher: SKU 8889527 — supplyclinic.com MPN-confirmed (PF1715 in listing) → price_match-eligible
+INFO app.matcher: SKU 8889527 — usdentaldepot.com MPN-confirmed (PF1715 in listing) → price_match-eligible
+INFO app.matcher: SKU 8889527 — ansondental.com flagged OUT OF STOCK (demoted; won't headline)
+INFO app.search: SKU 2223852 — market sweep starting (3 queries: DMG Mixing Tips Teal 50mL 48/Bx | dental impression mixing tips 50ml teal 48 box | DMG 678212 Mixing Tips)
+INFO pipeline: Stage 1 done — SKU 8889527: 14 candidate(s), best_exact=$42.31 @ usdentaldepot.com
+INFO app.search: SKU 2223852 — seeded 2 known-good URL(s) from seed_urls.txt
+INFO pipeline: Stage 1 done — SKU 2013820: 14 candidate(s), best_exact=none
+WARNING app.search: SKU 2223852 — SerpAPI key missing; will rely on Firecrawl /search
+INFO app.search: SKU 2223852 — supplier gap-sweep: 68/70 suppliers missing from organic; 3 Firecrawl /search batch(es) (limit=40, 25 domains each) to fill gap
+INFO app.search: Firecrawl /search (supplier-gap) — +4 candidate(s) for 'DMG 678212 Mixing Tips Teal' (credits used=2, left=998)
+INFO app.search: AGG_DEBUG wrote net32.com_www-net32-com-ec-cranberry-s3-earloop-masks-d-168843_fe554e59b3.{json,section.md,full.md} (returned $8.97)
+INFO app.search: SKU 1392761 — aggregator price LOCKED $8.97 (10 sellers, badge_match=True) — https://www.net32.com/ec/cranberry-s3-earloop-masks-d-168843
+INFO app.search: SKU 1392761 — scrape SUCCESS (markdown, stored 10000 of 109236 chars) — https://www.net32.com/ec/cranberry-s3-earloop-masks-d-168843
+INFO app.search: SKU 1392761 — scrape CACHE HIT (10000 chars, 0 credits) — https://frontierdental.com/us/en/product/s3-plus-mask-black-
+INFO app.search: SKU 1392761 — scraping pattersondental.com (https://www.pattersondental.com/Supplies/ItemDetail/071272137) …
+INFO app.search: Firecrawl /search (supplier-gap) — +2 candidate(s) for 'DMG 678212 Mixing Tips Teal' (credits used=2, left=996)
+WARNING app.search: SKU 1392761 — scrape: login wall (no public price shown) at https://www.pattersondental.com/Supplies/ItemDetail/071272137
+INFO app.search: SKU 1392761 — scrape CACHE HIT (10000 chars, 0 credits) — https://shop.benco.com/Product/5747-640/cranberry-s3-procedu
+INFO app.search: SKU 1392761 — scrape CACHE HIT (10000 chars, 0 credits) — https://ddsdentalsupplies.com/face-masks/
+INFO app.search: SKU 1392761 — scrape CACHE HIT (10000 chars, 0 credits) — https://ddsdentalsupplies.com/s3-black-level-3-face-masks-3/
+INFO app.search: SKU 1392761 — scrape CACHE HIT (6847 chars, 0 credits) — https://newarkdentalpemco.com/products/face-masks-s3-white-5
+INFO app.search: SKU 1392761 — scrape CACHE HIT (6701 chars, 0 credits) — https://myddssupply.com/products/4-ply-astm-level-3-black-w-
+INFO app.search: SKU 1392761 — scrape CACHE HIT (6761 chars, 0 credits) — https://myddssupply.com/products/1000-tulip-4-ply-astm-level
+INFO app.search: SKU 1392761 — scrape CACHE HIT (3983 chars, 0 credits) — https://supplydoc.com/products/s3-level-3-earloop-face-masks
+INFO app.search: SKU 1392761 — scrape CACHE HIT (10000 chars, 0 credits) — https://optimusdentalsupply.com/face-masks/cranberry-masks/c
+INFO app.search: SKU 1392761 — scrape CACHE HIT (10000 chars, 0 credits) — https://www.practicon.com/cranberry-s3-astm-level-3-face-mas
+INFO app.search: SKU 1392761 — scrape CACHE HIT (3204 chars, 0 credits) — https://www.crazydentalprices.com/S3-S3160K
+INFO app.ai: SKU 1392761 — 13 scraped page(s): 13 cache hit(s), 0 to extract
+INFO app.matcher: SKU 1392761 — frontierdental.com MPN-confirmed (S3160K in listing) → price_match-eligible
+INFO app.matcher: SKU 1392761 — optimusdentalsupply.com MPN-confirmed (S3160K in listing) → price_match-eligible
+INFO app.matcher: SKU 1392761 — crazydentalprices.com MPN-confirmed (S3160K in listing) → price_match-eligible
+INFO app.search: SKU 2222660 — market sweep starting (3 queries: Kulzer Dynamic Mixing Tips Yellow w/LuerLock 40/Pk | dental dynamic mixing tips yellow luer lock 40 pack | Kulzer CW-6162 Dynamic Mixing Tips)
+INFO pipeline: Stage 1 done — SKU 1392761: 14 candidate(s), best_exact=none
+INFO app.search: SKU 2222660 — seeded 3 known-good URL(s) from seed_urls.txt
+INFO app.search: SKU 2222660 — discovery CACHE HIT: 24 known URL(s), skipping search (scrapes still run fresh)
+INFO app.search: SKU 2222660 — scraping supplyclinic.com (https://www.supplyclinic.com/items/dynamic-mixing-tip-yellow-40-pack-coltene-whaledent-6162) …
+INFO app.search: AGG_DEBUG wrote supplyclinic.com_www-supplyclinic-com-items-dynamic-mixing-tip-yellow-40-pack_9ec5b3c197.{json,section.md,full.md} (returned $62.75)
+INFO app.search: SKU 2222660 — aggregator price LOCKED $62.75 (5 sellers, badge_match=False) — https://www.supplyclinic.com/items/dynamic-mixing-tip-yellow
+INFO app.search: SKU 2222660 — scrape SUCCESS (markdown, stored 4899 of 4899 chars) — https://www.supplyclinic.com/items/dynamic-mixing-tip-yellow
+INFO app.search: SKU 2222660 — scraping net32.com (https://www.net32.com/ec/kerr-dynamic-yellow-mixing-tips-380-ml-d-177998) …
+INFO app.search: AGG_DEBUG wrote net32.com_www-net32-com-ec-kerr-dynamic-yellow-mixing-tips-380-ml-d-17_a116d360ed.{json,section.md,full.md} (returned $59.99)
+INFO app.search: SKU 2222660 — aggregator price LOCKED $59.99 (8 sellers, badge_match=True) — https://www.net32.com/ec/kerr-dynamic-yellow-mixing-tips-380
+INFO app.search: SKU 2222660 — scrape SUCCESS (markdown, stored 10000 of 137878 chars) — https://www.net32.com/ec/kerr-dynamic-yellow-mixing-tips-380
+INFO app.search: SKU 2222660 — scraping supplyclinic.com (https://www.supplyclinic.com/items/dynamic-mixing-tips-yellow-50-pkg-34746-kerr-34746) …
+INFO app.search: AGG_DEBUG wrote supplyclinic.com_www-supplyclinic-com-items-dynamic-mixing-tips-yellow-50-pkg_f08e7c068e.{json,section.md,full.md} (returned $60.91)
+INFO app.search: SKU 2222660 — aggregator price LOCKED $60.91 (5 sellers, badge_match=False) — https://www.supplyclinic.com/items/dynamic-mixing-tips-yello
+INFO app.search: SKU 2222660 — scrape SUCCESS (markdown, stored 4980 of 4980 chars) — https://www.supplyclinic.com/items/dynamic-mixing-tips-yello
+INFO app.search: SKU 2222660 — scrape CACHE HIT (3183 chars, 0 credits) — https://topqualitygloves.com/products/top-quality-dynamic-mi
+INFO app.search: SKU 2222660 — scrape CACHE HIT (3746 chars, 0 credits) — https://ansondental.com/products/premium-dental-dynamic-mixi
+INFO app.search: SKU 2222660 — scrape CACHE HIT (10000 chars, 0 credits) — https://surgimac.com/products/mark3-high-performance-mixing-
+INFO app.search: SKU 2222660 — scrape CACHE HIT (10000 chars, 0 credits) — https://surgimac.com/products/mark3-crown-and-bridge-mixing-
+INFO app.search: SKU 2222660 — FREE FETCH (0 credits) — structured $18.99 from https://myddssupply.com/products/yellow-mixing-tips-medium-4
+INFO app.search: SKU 2222660 — scrape CACHE HIT (5756 chars, 0 credits) — https://www.skydentalsupply.com/dynamic-mixingtips-34746.htm
+INFO app.search: SKU 2222660 — scrape CACHE HIT (2401 chars, 0 credits) — https://www.crazydentalprices.com/Kerr-34746?leadsource=Jolt
+INFO app.search: SKU 2222660 — scrape CACHE HIT (4032 chars, 0 credits) — https://www.safcodental.com/product/kerr-mixing-tips
+INFO app.search: SKU 2222660 — scraping pattersondental.com (https://www.pattersondental.com/Supplies/ItemDetail/071808278) …
+WARNING app.search: SKU 2222660 — scrape: login wall (no public price shown) at https://www.pattersondental.com/Supplies/ItemDetail/071808278
+INFO app.search: SKU 2222660 — scrape CACHE HIT (10000 chars, 0 credits) — https://optimusdentalsupply.com/kerr-mixing-tips-small-yello
+INFO app.search: SKU 2222660 — scrape CACHE HIT (1337 chars, 0 credits) — https://dentavision.com.au/product/yellow-volume-mixing-tips
+INFO app.ai: SKU 2222660 — 13 scraped page(s): 13 cache hit(s), 0 to extract
+INFO app.matcher: SKU 2222660 — flagged topqualitygloves.com $22.25 as low outlier vs median $60.91
+INFO app.matcher: SKU 2222660 — flagged myddssupply.com $18.99 as low outlier vs median $60.91
+INFO app.search: SKU 3120199 — market sweep starting (2 queries: Henry Schein Genie VPS Magic Mix Stand Bulk Heavy Body 4/Pk | dental VPS impression material heavy body bulk 4 pack)
+INFO app.search: SKU 3120199 — seeded 4 known-good URL(s) from seed_urls.txt
+INFO app.search: SKU 3120199 — discovery CACHE HIT: 19 known URL(s), skipping search (scrapes still run fresh)
+INFO app.search: SKU 3120199 — scraping net32.com (https://www.net32.com/ec/genie-magic-mix-vps-impression-material-heavy-d-172999) …
+INFO app.search: AGG_DEBUG wrote net32.com_www-net32-com-ec-genie-magic-mix-vps-impression-material-hea_0e3296cb04.{json,section.md,full.md} (returned $360.1)
+INFO app.search: SKU 3120199 — aggregator price LOCKED $360.10 (2 sellers, badge_match=True) — https://www.net32.com/ec/genie-magic-mix-vps-impression-mate
+INFO app.search: SKU 3120199 — scrape SUCCESS (markdown, stored 10000 of 142225 chars) — https://www.net32.com/ec/genie-magic-mix-vps-impression-mate
+INFO app.search: SKU 3120199 — scraping net32.com (https://www.net32.com/ec/genie-magic-mix-vps-impression-material-heavy-d-172996) …
+INFO app.search: AGG_DEBUG wrote net32.com_www-net32-com-ec-genie-magic-mix-vps-impression-material-hea_76589a5e3b.{json,section.md,full.md} (returned $174.31)
+INFO app.search: SKU 3120199 — aggregator price LOCKED $174.31 (2 sellers, badge_match=True) — https://www.net32.com/ec/genie-magic-mix-vps-impression-mate
+INFO app.search: SKU 3120199 — scrape SUCCESS (markdown, stored 10000 of 141956 chars) — https://www.net32.com/ec/genie-magic-mix-vps-impression-mate
+INFO app.search: SKU 3120199 — scraping supplyclinic.com (https://www.supplyclinic.com/items/genie-vps-rapid-set-heavy-body-magic-mix-bulk-kit-380ml-4-box-sul) …
+INFO app.search: AGG_DEBUG wrote supplyclinic.com_www-supplyclinic-com-items-genie-vps-rapid-set-heavy-body-ma_7f96ffcba8.{json,section.md,full.md} (returned $500.43)
+INFO app.search: SKU 3120199 — aggregator price LOCKED $500.43 (5 sellers, badge_match=False) — https://www.supplyclinic.com/items/genie-vps-rapid-set-heavy
+INFO app.search: SKU 3120199 — scrape SUCCESS (markdown, stored 6355 of 6355 chars) — https://www.supplyclinic.com/items/genie-vps-rapid-set-heavy
+INFO app.search: SKU 3120199 — scrape CACHE HIT (10000 chars, 0 credits) — https://ddsdentalsupplies.com/sultan-healthcare-genie-5-1-im
+INFO app.search: SKU 3120199 — scrape CACHE HIT (10000 chars, 0 credits) — https://alpinedentalshop.com/products/genie-vps-heavy-body-4
+INFO app.search: SKU 3120199 — scrape CACHE HIT (10000 chars, 0 credits) — https://www.tdsc.com/All-Categories/Dental-Supplies/Impressi
+INFO app.search: SKU 3120199 — scrape CACHE HIT (5223 chars, 0 credits) — https://www.safcodental.com/product/genie-reg-magic-mix
+INFO app.search: SKU 3120199 — scrape CACHE HIT (5755 chars, 0 credits) — https://www.safcodental.com/product/genie-reg-50ml-cartridge
+INFO app.search: SKU 3120199 — scrape CACHE HIT (10000 chars, 0 credits) — https://www.crazydentalprices.com/Supplies
+INFO app.search: SKU 3120199 — scrape CACHE HIT (7976 chars, 0 credits) — https://newarkdentalpemco.com/products/genie-magic-mix-heavy
+INFO app.search: SKU 3120199 — scrape CACHE HIT (3134 chars, 0 credits) — https://www.crazydentalprices.com/Genie-VPS-78835
+WARNING app.search: SKU 3120199 — scrape: login wall (price gated, cached) at https://shop.benco.com/Product/3597-799/genie-vps-impression-material-magic-mix-
+INFO app.search: SKU 3120199 — scrape CACHE HIT (5603 chars, 0 credits) — https://www.dentalcity.com/product/11616/sultan-genie-magic-
+INFO app.search: SKU 3120199 — scraping dcdental.com (https://www.dcdental.com/Genie-VPS-78815) …
+INFO app.search: SKU 2223852 — storefront-feed fallback: +2 candidate(s) from shop catalogs
+INFO app.search: SKU 2223852 — SerpAPI unavailable; STAGE 2 Firecrawl /search (open web), credits left=996
+WARNING app.search: SKU 3120199 — scrape: login wall (no public price shown) at https://www.dcdental.com/Genie-VPS-78815
+INFO app.ai: SKU 3120199 — 12 scraped page(s): 12 cache hit(s), 0 to extract
+INFO app.matcher: SKU 3120199 — net32.com locked-price token-confirmed → price_match-eligible
+INFO app.matcher: SKU 3120199 — net32.com locked-price token-confirmed → price_match-eligible
+INFO app.matcher: SKU 3120199 — flagged safcodental.com $73.99 as low outlier vs median $360.10
+INFO app.matcher: SKU 3120199 — locked price net32.com $174.31 flagged vs peer median $500.43
+INFO app.matcher: SKU 3120199 — alpinedentalshop.com price $199.99 flagged UNVERIFIED (scraped page body has no price)
+INFO app.search: SKU 3122330 — market sweep starting (3 queries: Henry Schein Genie Putty Rapid Set Berry 2x445 Gr | dental VPS impression putty rapid set berry 2x445 gram | Sultan Healthcare 0077650FG Genie Putty Rapid Set)
+INFO app.search: SKU 3122330 — seeded 3 known-good URL(s) from seed_urls.txt
+INFO app.search: SKU 3122330 — discovery CACHE HIT: 17 known URL(s), skipping search (scrapes still run fresh)
+INFO app.search: SKU 3122330 — scraping net32.com (https://www.net32.com/ec/genie-vps-impression-material-putty-rapid-set-d-73582) …
+INFO app.search: Firecrawl /search (stage2-web) — +6 candidate(s) for 'DMG Mixing Tips Teal 50mL 48/Bx' (credits used=2, left=994)
+INFO app.search: Firecrawl /search (stage2-web) — +2 candidate(s) for 'dental impression mixing tips 50ml teal ' (credits used=2, left=992)
+INFO app.search: Firecrawl /search (stage2-web) — +4 candidate(s) for 'DMG 678212 Mixing Tips' (credits used=2, left=990)
+INFO app.search: SKU 2223852 — STAGE 3 supplier fallback (reserve=50 credits): Firecrawl /search restricted to 10 trusted domains
+INFO app.search: SKU 3122330 — oversized page (152142 chars) — almost certainly a category/search listing, not a product page; skipping extraction
+INFO app.search: SKU 3122330 — scrape CACHE HIT (3914 chars, 0 credits) — https://thedentalmarket.net/dental-supplies/genie-putty-rapi
+INFO app.search: SKU 3122330 — scrape CACHE HIT (10000 chars, 0 credits) — https://ddsdentalsupplies.com/sultan-healthcare-genie-impres
+INFO app.search: SKU 3122330 — scrape CACHE HIT (10000 chars, 0 credits) — https://optimusdentalsupply.com/sultan-genie-vps-putty-hard-
+INFO app.search: SKU 3122330 — scrape CACHE HIT (3984 chars, 0 credits) — https://dentalwholesaledirect.com/impression-materials/genie
+WARNING app.search: SKU 3122330 — scrape: login wall (price gated, cached) at https://www.dhpsupply.com/item/290-0077650FG/Genie-VPS-Putty-Rapid-Set/
+WARNING app.search: SKU 3122330 — scrape: login wall (price gated, cached) at https://shop.benco.com/Product/3385-599/genie-vps-putty-rapid-set-pack-of-2
+INFO app.search: SKU 2223852 — discovery relevance filter dropped 3 off-topic URL(s) (22 → 19)
+INFO app.search: SKU 2223852 — sweep done: 13/19 shortlisted (cheapest=$18.65 at frontierdental.com)
+INFO app.search: SKU 2223852 — scraping net32.com (https://www.net32.com/ec/parkell-mixing-tips-aqua-base-mucosoft-mucohard-d-151744) …
+INFO app.search: SKU 3122330 — scraping pattersondental.com (https://www.pattersondental.com/Supplies/ItemDetail/076660062) …
+INFO app.search: AGG_DEBUG wrote net32.com_www-net32-com-ec-parkell-mixing-tips-aqua-base-mucosoft-muco_94474c3a56.{json,section.md,full.md} (returned $35.99)
+INFO app.search: SKU 2223852 — aggregator price LOCKED $35.99 (2 sellers, badge_match=True) — https://www.net32.com/ec/parkell-mixing-tips-aqua-base-mucos
+INFO app.search: SKU 2223852 — scrape SUCCESS (markdown, stored 10000 of 119642 chars) — https://www.net32.com/ec/parkell-mixing-tips-aqua-base-mucos
+INFO app.search: SKU 2223852 — scraping frontierdental.com (https://www.frontierdental.com/us/fr/product/mixing-tips-for-50-ml-cartridges-teal-48-pk-77586) …
+WARNING app.search: SKU 3122330 — scrape: login wall (no public price shown) at https://www.pattersondental.com/Supplies/ItemDetail/076660062
+INFO app.search: SKU 3122330 — scrape CACHE HIT (10000 chars, 0 credits) — https://www.scottsdental.com/genie.html
+INFO app.search: SKU 3122330 — scraping pattersondental.com (https://www.pattersondental.com/en-CA/Supplies/ItemDetail/076660062) …
+INFO app.search: SKU 2223852 — scrape SUCCESS (markdown, stored 10000 of 56487 chars) — https://www.frontierdental.com/us/fr/product/mixing-tips-for
+INFO app.search: SKU 2223852 — FREE FETCH (0 credits) — structured $18.99 from https://myddssupply.com/products/pink-mixing-tips-bag-of-48
+INFO app.search: SKU 2223852 — scrape CACHE HIT (6052 chars, 0 credits) — https://myddssupply.com/products/yellow-mixing-tips-medium-4
+WARNING app.search: SKU 3122330 — scrape: login wall (no public price shown) at https://www.pattersondental.com/en-CA/Supplies/ItemDetail/076660062
+INFO app.search: SKU 3122330 — scrape CACHE HIT (3776 chars, 0 credits) — https://www.acmedent.com/products/28585
+INFO app.search: SKU 3122330 — scrape CACHE HIT (5690 chars, 0 credits) — https://www.sultanhealthcare.com/restorative/genie-impressio
+INFO app.search: SKU 3122330 — scraping sinclairdental.com (https://www.sinclairdental.com/Supplies/Impression-Materials/Vinyl-Polysiloxanes/Genie-Putty-Rapid-S) …
+INFO app.search: SKU 2223852 — FREE FETCH (0 credits) — structured $9.95 from https://stardentalsupplies.com/product/impression-mixing-tip
+WARNING app.search: SKU 3122330 — scrape: login wall (no public price shown) at https://www.sinclairdental.com/Supplies/Impression-Materials/Vinyl-Polysiloxanes
+INFO app.search: SKU 3122330 — scrape CACHE HIT (2907 chars, 0 credits) — https://azdentall.com/products/dental-impression-material-pu
+INFO app.ai: SKU 3122330 — 8 scraped page(s): 8 cache hit(s), 0 to extract
+INFO app.matcher: SKU 3122330 — dhpsupply.com MPN-confirmed (0077650FG in listing) → price_match-eligible
+INFO app.matcher: SKU 3122330 — acmedent.com flagged OUT OF STOCK (demoted; won't headline)
+INFO app.search: SKU 3865728 — market sweep starting (3 queries: SciCan Speedclean For Autoclave 16oz/Bt | autoclave cleaner 16oz bottle | SciCan 002039605 Speedclean For Autoclave)
+INFO app.search: SKU 3865728 — seeded 5 known-good URL(s) from seed_urls.txt
+INFO app.search: SKU 3865728 — discovery CACHE HIT: 17 known URL(s), skipping search (scrapes still run fresh)
+INFO app.search: SKU 3865728 — scraping supplyclinic.com (https://www.supplyclinic.com/items/speed-clean-autoclave-cleaner-liquid-16oz-bt-midmark-002-0396-00?) …
+INFO app.search: SKU 2223852 — FREE FETCH (0 credits) — structured $12.95 from https://stardentalsupplies.com/product/impression-mixing-tip
+INFO app.search: SKU 2223852 — FREE FETCH (0 credits) — structured $66.49 from https://www.safcodental.com/product/dmg-mixing-tips
+INFO app.search: SKU 2223852 — FREE FETCH (0 credits) — structured $80.95 from https://dentalwholesaledirect.com/impression-materials/mixin
+INFO app.search: SKU 2223852 — FREE FETCH (0 credits) — structured $48.00 from https://www.pstshop.com/large-green-mixing-tips-48-bag/
+INFO app.search: SKU 2223852 — FREE FETCH (0 credits) — structured $30.00 from https://dentaldash.shop/products/hp-mixing-tips-6-5-mm-teal-
+INFO app.search: SKU 2223852 — scraping frontierdental.com (https://frontierdental.com/us/en/product/mixing-tips-for-50-ml-cartridges-teal-48-pk-77586) …
+INFO app.search: AGG_DEBUG wrote supplyclinic.com_www-supplyclinic-com-items-speed-clean-autoclave-cleaner-liq_39ede6025c.{json,section.md,full.md} (returned $22.6)
+INFO app.search: SKU 3865728 — aggregator price LOCKED $22.60 (2 sellers, badge_match=False) — https://www.supplyclinic.com/items/speed-clean-autoclave-cle
+INFO app.search: SKU 3865728 — scrape SUCCESS (markdown, stored 3755 of 3755 chars) — https://www.supplyclinic.com/items/speed-clean-autoclave-cle
+INFO app.search: SKU 3865728 — scraping supplyclinic.com (https://www.supplyclinic.com/items/speed-clean-autoclave-cleaner-liquid-16oz-bt-midmark-002-0396-00) …
+INFO app.search: SKU 2223852 — scrape SUCCESS (markdown, stored 10000 of 28392 chars) — https://frontierdental.com/us/en/product/mixing-tips-for-50-
+INFO app.search: SKU 2223852 — FREE FETCH (0 credits) — structured $33.30 from https://www.dentalcity.com/product/14931/dental-city-65mm-t-
+INFO app.search: AGG_DEBUG wrote supplyclinic.com_www-supplyclinic-com-items-speed-clean-autoclave-cleaner-liq_06d8a460fb.{json,section.md,full.md} (returned $22.6)
+INFO app.search: SKU 3865728 — aggregator price LOCKED $22.60 (2 sellers, badge_match=False) — https://www.supplyclinic.com/items/speed-clean-autoclave-cle
+INFO app.search: SKU 3865728 — scrape SUCCESS (markdown, stored 3735 of 3735 chars) — https://www.supplyclinic.com/items/speed-clean-autoclave-cle
+INFO app.search: SKU 3865728 — scraping net32.com (https://www.net32.com/ec/speedclean-autoclave-cleaner-breaks-chamber-deposits-types-d-29186) …
+INFO app.search: SKU 2223852 — scraping dhpsupply.com (https://www.dhpsupply.com/item/308-678212/Mixing-Tips-Refill-Teal/) …
+INFO app.search: AGG_DEBUG wrote net32.com_www-net32-com-ec-speedclean-autoclave-cleaner-breaks-chamber_00c9ed1aec.{json,section.md,full.md} (returned $26.94)
+INFO app.search: SKU 3865728 — aggregator price LOCKED $26.94 (3 sellers, badge_match=True) — https://www.net32.com/ec/speedclean-autoclave-cleaner-breaks
+INFO app.search: SKU 3865728 — scrape SUCCESS (markdown, stored 9941 of 99659 chars) — https://www.net32.com/ec/speedclean-autoclave-cleaner-breaks
+INFO app.search: SKU 3865728 — scrape CACHE HIT (5202 chars, 0 credits) — https://www.lexiconsupply.com/products/speed-clean-autoclave
+INFO app.search: SKU 3865728 — scrape CACHE HIT (3501 chars, 0 credits) — https://dentalcity.com/product/9003/midmark-speedclean-autoc
+INFO app.search: SKU 3865728 — scrape CACHE HIT (10000 chars, 0 credits) — https://www.pstshop.com/speed-clean-autoclave-cleaner-16-oz-
+INFO app.search: SKU 3865728 — scrape CACHE HIT (10000 chars, 0 credits) — https://www.frontierdental.com/us/en/product/speed-clean-aut
+INFO app.search: SKU 3865728 — scrape CACHE HIT (10000 chars, 0 credits) — https://ddsdentalsupplies.com/speed-clean-autoclave-cleaner-
+INFO app.search: SKU 3865728 — scraping pattersondental.com (https://www.pattersondental.com/Supplies/ItemDetail/074876504) …
+WARNING app.search: SKU 2223852 — scrape: login wall (no public price shown) at https://www.dhpsupply.com/item/308-678212/Mixing-Tips-Refill-Teal/
+INFO app.ai: SKU 2223852 — 12 scraped page(s): 12 cache hit(s), 0 to extract
+INFO app.matcher: SKU 2223852 — frontierdental.com MPN-confirmed (678212 in listing) → price_match-eligible
+INFO app.matcher: SKU 2223852 — frontierdental.com MPN-confirmed (678212 in listing) → price_match-eligible
+INFO app.matcher: SKU 2223852 — dhpsupply.com MPN-confirmed (678212 in listing) → price_match-eligible
+INFO app.matcher: SKU 2223852 — net32.com locked-price token-confirmed → price_match-eligible
+INFO app.search: SKU 7013176 — market sweep starting (3 queries: Meisinger Polisher HP 9736H-150 2/Pk | dental polisher HP 9736H-150 2 pack | Meisinger 9736H-150-HP-TRQ Polisher HP)
+INFO pipeline: Stage 1 done — SKU 2223852: 13 candidate(s), best_exact=none
+INFO app.search: SKU 7013176 — seeded 3 known-good URL(s) from seed_urls.txt
+INFO pipeline: Stage 1 done — SKU 2222660: 14 candidate(s), best_exact=none
+INFO app.search: SKU 7013176 — discovery CACHE HIT: 27 known URL(s), skipping search (scrapes still run fresh)
+INFO pipeline: Stage 1 done — SKU 3120199: 14 candidate(s), best_exact=$562.61 @ newarkdentalpemco.com
+INFO pipeline: Stage 1 done — SKU 3122330: 14 candidate(s), best_exact=none
+INFO app.search: SKU 7013176 — scrape CACHE HIT (10000 chars, 0 credits) — https://ddsdentalsupplies.com/9736h-150-hp-trq-polisher-diam
+INFO app.search: SKU 7013176 — scrape CACHE HIT (10000 chars, 0 credits) — https://www.amtouch.com/shop-by-category/finishing-polishing
+INFO app.search: SKU 7013176 — scrape CACHE HIT (7566 chars, 0 credits) — https://www.avtecdental.com/products/trq-abrasive-turquoise-
+INFO app.search: SKU 7013176 — scraping pattersondental.com (https://www.pattersondental.com/Supplies/finishing-polishing-rotary-instruments/polishers/diamond-ab) …
+WARNING app.search: SKU 3865728 — scrape: login wall (no public price shown) at https://www.pattersondental.com/Supplies/ItemDetail/074876504
+INFO app.search: SKU 3865728 — scrape CACHE HIT (2781 chars, 0 credits) — https://dental.keystoneindustries.com/product/autoclave-clea
+INFO app.search: SKU 3865728 — scrape CACHE HIT (5666 chars, 0 credits) — https://www.skydentalsupply.com/autoclave-cleaner--quart--00
+INFO app.search: SKU 3865728 — scrape CACHE HIT (5041 chars, 0 credits) — https://www.ciamedical.com/midmark-002039600-each-speedclean
+INFO app.search: SKU 3865728 — scrape CACHE HIT (2656 chars, 0 credits) — https://shop.midmark.com/product/002039600-speedclean-16-oz-
+INFO app.search: SKU 3865728 — scrape CACHE HIT (2279 chars, 0 credits) — https://shop.midmark.com/product/002039605-speedclean-case-o
+INFO app.ai: SKU 3865728 — 13 scraped page(s): 13 cache hit(s), 0 to extract
+INFO app.matcher: SKU 3865728 — pstshop.com MPN-confirmed (002039605 in listing) → price_match-eligible
+INFO app.matcher: SKU 3865728 — shop.midmark.com MPN-confirmed (002039605 in listing) → price_match-eligible
+INFO app.matcher: SKU 3865728 — net32.com locked-price token-confirmed → price_match-eligible
+INFO app.matcher: SKU 3865728 — lexiconsupply.com flagged OUT OF STOCK (demoted; won't headline)
+INFO app.search: SKU 7120116 — market sweep starting (3 queries: Sunstar Gum Technique Deep Clean TB Soft Compact 12/Bx | toothbrush soft compact 12 box | Sunstar 525TPA1 Gum Technique Deep Clean TB)
+INFO pipeline: Stage 1 done — SKU 3865728: 14 candidate(s), best_exact=none
+INFO app.search: SKU 7120116 — seeded 3 known-good URL(s) from seed_urls.txt
+INFO app.search: SKU 7120116 — discovery CACHE HIT: 21 known URL(s), skipping search (scrapes still run fresh)
+INFO app.search: SKU 7120116 — scraping net32.com (https://www.net32.com/ec/gum-technique-deep-clean-toothbrush-compact-head-d-133049) …
+WARNING app.search: SKU 7013176 — scrape: login wall (no public price shown) at https://www.pattersondental.com/Supplies/finishing-polishing-rotary-instruments/
+INFO app.search: SKU 7013176 — scraping pattersondental.com (https://www.pattersondental.com/Supplies/ItemDetail/071399526) …
+INFO app.search: AGG_DEBUG wrote net32.com_www-net32-com-ec-gum-technique-deep-clean-toothbrush-compact_a1f97fef0b.{json,section.md,full.md} (returned $22.85)
+INFO app.search: SKU 7120116 — aggregator price LOCKED $22.85 (3 sellers, badge_match=True) — https://www.net32.com/ec/gum-technique-deep-clean-toothbrush
+INFO app.search: SKU 7120116 — scrape SUCCESS (markdown, stored 10000 of 126580 chars) — https://www.net32.com/ec/gum-technique-deep-clean-toothbrush
+INFO app.search: SKU 7120116 — scraping net32.com (https://www.net32.com/ec/gum-technique-deep-clean-toothbrush-compact-head-d-133050) …
+WARNING app.search: SKU 7013176 — scrape: login wall (no public price shown) at https://www.pattersondental.com/Supplies/ItemDetail/071399526
+INFO app.search: SKU 7013176 — scrape CACHE HIT (8768 chars, 0 credits) — https://www.dentalcity.com/product/21767/meisinger-ceramic-p
+INFO app.search: SKU 7013176 — scrape CACHE HIT (186 chars, 0 credits) — https://meisingerusa.com/9736h-150-hp-trq-abrasive-turquoise
+INFO app.search: SKU 7013176 — scrape CACHE HIT (85 chars, 0 credits) — https://meisingerusa.com/polishers-abrasives?page=3
+WARNING app.search: SKU 7013176 — scrape: login wall (price gated, cached) at https://www.dhpsupply.com/manf/MEISI/Meisinger-USA-LLC/&pg=30
+WARNING app.search: SKU 7013176 — scrape: login wall (price gated, cached) at https://www.dhpsupply.com/item/740-9736H150HPTRQ/Ceramic-Abrasive-HP-9736H-150/
+INFO app.search: AGG_DEBUG wrote net32.com_www-net32-com-ec-gum-technique-deep-clean-toothbrush-compact_e29331757e.{json,section.md,full.md} (returned $19.0)
+INFO app.search: SKU 7120116 — aggregator price LOCKED $19.00 (2 sellers, badge_match=True) — https://www.net32.com/ec/gum-technique-deep-clean-toothbrush
+INFO app.search: SKU 7120116 — scrape SUCCESS (markdown, stored 10000 of 105582 chars) — https://www.net32.com/ec/gum-technique-deep-clean-toothbrush
+INFO app.search: SKU 7120116 — scrape CACHE HIT (2567 chars, 0 credits) — https://www.crazydentalprices.com/Technique-Deep-Clean-525PG
+INFO app.search: SKU 7120116 — scrape CACHE HIT (3812 chars, 0 credits) — https://dentalwholesaledirect.com/preventives/gum-technique-
+INFO app.search: SKU 7013176 — scraping midwestdental.com (https://midwestdental.com/product/view/18145) …
+INFO app.search: SKU 7120116 — scraping midwestdental.com (https://midwestdental.com/toothbrushes/_item/imprint-tech-deep-clean-sens-tb-144cs) …
+WARNING app.search: SKU 7013176 — scrape: login wall (price gated — 'login to see price') at https://midwestdental.com/product/view/18145
+INFO app.search: SKU 7013176 — scrape CACHE HIT (9197 chars, 0 credits) — https://shop.benco.com/Product/3787-959/9736150-pink-polishe
+INFO app.search: SKU 7013176 — scrape CACHE HIT (10000 chars, 0 credits) — https://ddsdentalsupplies.com/9736g-150-hp-p-polisher-diamon
+INFO app.search: SKU 7013176 — scrape CACHE HIT (7978 chars, 0 credits) — https://exceldentalshop.com/2174201
+INFO app.ai: SKU 7013176 — 9 scraped page(s): 9 cache hit(s), 0 to extract
+INFO app.matcher: SKU 7013176 — ddsdentalsupplies.com MPN-confirmed (9736H-150-HP-TRQ in listing) → price_match-eligible
+INFO app.matcher: SKU 7013176 — avtecdental.com MPN-confirmed (9736H-150-HP-TRQ in listing) → price_match-eligible
+INFO app.matcher: SKU 7013176 — meisingerusa.com MPN-confirmed (9736H-150-HP-TRQ in listing) → price_match-eligible
+INFO app.matcher: SKU 7013176 — dhpsupply.com MPN-confirmed (9736H-150-HP-TRQ in listing) → price_match-eligible
+INFO app.search: SKU 8969286 — market sweep starting (3 queries: Henry Schein Premium Cotton Rolls #2 Non-Sterile 2000/Bx | dental cotton rolls #2 non-sterile 2000 box | Henry Schein 8969286 Premium Cotton Rolls #2 Non-Sterile)
+INFO pipeline: Stage 1 done — SKU 7013176: 14 candidate(s), best_exact=none
+INFO app.search: SKU 8969286 — seeded 3 known-good URL(s) from seed_urls.txt
+INFO app.search: SKU 8969286 — discovery CACHE HIT: 14 known URL(s), skipping search (scrapes still run fresh)
+INFO app.search: SKU 8969286 — scraping net32.com (https://www.net32.com/ec/essentials-cotton-rolls-2-medium-2000-pk-d-188840) …
+WARNING app.search: SKU 7120116 — scrape: login wall (price gated — 'login to see price') at https://midwestdental.com/toothbrushes/_item/imprint-tech-deep-clean-sens-tb-144
+INFO app.search: SKU 7120116 — scrape CACHE HIT (10000 chars, 0 credits) — https://www.frontierdental.com/us/en/product/gum-technique-d
+INFO app.search: SKU 7120116 — scrape CACHE HIT (7711 chars, 0 credits) — https://www.safcodental.com/product/gum-technique-deep-clean
+INFO app.search: SKU 7120116 — scrape CACHE HIT (2714 chars, 0 credits) — https://www.crazydentalprices.com/Technique-Sensitive-Care-5
+INFO app.search: SKU 7120116 — scrape CACHE HIT (3812 chars, 0 credits) — https://dentalwholesaledirect.com/preventives/gum-technique-
+INFO app.search: SKU 7120116 — scrape CACHE HIT (3683 chars, 0 credits) — https://thedentalmarket.net/preventives/gum-technique-deep-c
+INFO app.search: SKU 7120116 — scrape CACHE HIT (6532 chars, 0 credits) — https://www.skydentalsupply.com/oral-b-gum-care-compacttooth
+INFO app.search: SKU 7120116 — scrape CACHE HIT (9915 chars, 0 credits) — https://www.practicon.com/oral-b-gum-care-compact-adult-toot
+INFO app.search: SKU 7120116 — scraping darbydental.com (https://www.darbydental.com/8110122.html) …
+INFO app.search: AGG_DEBUG wrote net32.com_www-net32-com-ec-essentials-cotton-rolls-2-medium-2000-pk-d_21f36d0caf.{json,section.md,full.md} (returned $25.51)
+INFO app.search: SKU 8969286 — aggregator price LOCKED $25.51 (1 sellers, badge_match=True) — https://www.net32.com/ec/essentials-cotton-rolls-2-medium-20
+INFO app.search: SKU 8969286 — scrape SUCCESS (markdown, stored 6568 of 116693 chars) — https://www.net32.com/ec/essentials-cotton-rolls-2-medium-20
+INFO app.search: SKU 8969286 — scrape CACHE HIT (10000 chars, 0 credits) — https://www.tdsc.com/All-Categories/Dental-Supplies/Disposab
+INFO app.search: SKU 8969286 — scrape CACHE HIT (5125 chars, 0 credits) — https://www.fireflysupply.com/products/henry-schein-size-2-m
+INFO app.search: SKU 8969286 — scrape CACHE HIT (3936 chars, 0 credits) — https://www.graylinemedical.com/products/henry-schein-cotton
+INFO app.search: SKU 8969286 — scrape CACHE HIT (8140 chars, 0 credits) — https://shop.benco.com/Product/1321-286/benco-dental-cotton-
+INFO app.search: SKU 8969286 — scrape CACHE HIT (3436 chars, 0 credits) — https://www.dentalcity.com/product/2223/dental-city-2-medium
+INFO app.search: SKU 8969286 — scrape CACHE HIT (3936 chars, 0 credits) — https://www.graylinemedical.com/products/henry-schein-cotton
+WARNING app.search: SKU 8969286 — scrape: login wall (price gated, cached) at https://www.dhpsupply.com/item/240-CS0200/Cotton-Rolls-2-Medium-Non/
+INFO app.search: SKU 8969286 — scrape CACHE HIT (2441 chars, 0 credits) — https://www.crazydentalprices.com/Cotton-Rolls-Crosstex-DNC
+INFO app.search: SKU 8969286 — scrape CACHE HIT (6245 chars, 0 credits) — https://quantumlabs.com/safco-cotton-rolls-med-2-2000bx
+INFO app.search: SKU 8969286 — scrape CACHE HIT (3782 chars, 0 credits) — https://dentalwholesaledirect.com/disposables/cotton-rolls-n
+INFO app.search: SKU 8969286 — scraping darbydental.com (https://www.darbydental.com/3412020.html) …
+WARNING app.search: SKU 7120116 — scrape: login wall (price gated — 'login to see price') at https://www.darbydental.com/8110122.html
+INFO app.search: SKU 7120116 — scrape CACHE HIT (10000 chars, 0 credits) — https://www.sunstargum.com/us-en/products/toothbrushes/gum-t
+INFO app.ai: SKU 7120116 — 12 scraped page(s): 12 cache hit(s), 0 to extract
+INFO app.matcher: SKU 7120116 — net32.com locked-price token-confirmed → price_match-eligible
+INFO app.search: SKU 7772551 — market sweep starting (3 queries: 3M Clinpro Clear Fluoride Treatment No Flavor 100/Pk | dental fluoride treatment clear no flavor 100 pack | 3M 7210FF Clinpro Clear Fluoride Treatment)
+INFO pipeline: Stage 1 done — SKU 7120116: 14 candidate(s), best_exact=$14.49 @ crazydentalprices.com
+INFO app.search: SKU 7772551 — seeded 4 known-good URL(s) from seed_urls.txt
+INFO app.search: SKU 7772551 — discovery CACHE HIT: 39 known URL(s), skipping search (scrapes still run fresh)
+INFO app.search: SKU 7772551 — scraping supplyclinic.com (https://www.supplyclinic.com/items/clinpro-clear-fluoride-treatment-0-5ml-100-pk-flavorless-3m-7210f) …
+WARNING app.search: SKU 8969286 — scrape: login wall (price gated — 'login to see price') at https://www.darbydental.com/3412020.html
+INFO app.search: SKU 8969286 — scrape CACHE HIT (10000 chars, 0 credits) — https://www.tdsc.com/All-Categories/Dental-Supplies/Disposab
+INFO app.search: SKU 8969286 — scrape CACHE HIT (10000 chars, 0 credits) — https://medexsupply.com/henry-schein-premium-cotton-roll-1-5
+INFO app.ai: SKU 8969286 — 12 scraped page(s): 12 cache hit(s), 0 to extract
+INFO app.matcher: SKU 8969286 — graylinemedical.com MPN-confirmed (8969286 in listing) → price_match-eligible
+INFO app.matcher: SKU 8969286 — graylinemedical.com MPN-confirmed (8969286 in listing) → price_match-eligible
+INFO app.matcher: SKU 8969286 — medexsupply.com MPN-confirmed (8969286 in listing) → price_match-eligible
+INFO app.search: SKU 1024081 — market sweep starting (3 queries: Tray Cover 8.5"x12.25" Aqua 1000/Ca | dental tray cover 8.5"x12.25" aqua 1000 pack | 1024081 Tray Cover)
+INFO pipeline: Stage 1 done — SKU 8969286: 14 candidate(s), best_exact=$28.5 @ fireflysupply.com
+INFO app.search: SKU 1024081 — seeded 3 known-good URL(s) from seed_urls.txt
+INFO app.search: SKU 1024081 — discovery CACHE HIT: 17 known URL(s), skipping search (scrapes still run fresh)
+INFO app.search: SKU 1024081 — scraping supplyclinic.com (https://www.supplyclinic.com/items/tray-covers-ritter-b-aqua-8-5-x-12-25-1000-crosstex-fbaq) …
+INFO app.search: AGG_DEBUG wrote supplyclinic.com_www-supplyclinic-com-items-tray-covers-ritter-b-aqua-8-5-x-1_d7aab5c8f2.{json,section.md,full.md} (returned $28.3)
+INFO app.search: SKU 1024081 — aggregator price LOCKED $28.30 (4 sellers, badge_match=False) — https://www.supplyclinic.com/items/tray-covers-ritter-b-aqua
+INFO app.search: SKU 1024081 — scrape SUCCESS (markdown, stored 6387 of 6387 chars) — https://www.supplyclinic.com/items/tray-covers-ritter-b-aqua
+INFO app.search: SKU 1024081 — scraping supplyclinic.com (https://www.supplyclinic.com/items/tray-covers-ritter-b-8-5-x-12-25-blue-1000-pk-hsb-house-brand-den) …
+INFO app.search: AGG_DEBUG wrote supplyclinic.com_www-supplyclinic-com-items-tray-covers-ritter-b-8-5-x-12-25_f11747d0db.{json,section.md,full.md} (returned $17.65)
+INFO app.search: SKU 1024081 — aggregator price LOCKED $17.65 (1 sellers, badge_match=False) — https://www.supplyclinic.com/items/tray-covers-ritter-b-8-5-
+INFO app.search: SKU 1024081 — scrape SUCCESS (markdown, stored 3648 of 3648 chars) — https://www.supplyclinic.com/items/tray-covers-ritter-b-8-5-
+INFO app.search: SKU 1024081 — scraping net32.com (https://www.net32.com/ec/top-quality-manufacturing-paper-tray-covers-ritter-d-184701) …
+INFO app.search: AGG_DEBUG wrote supplyclinic.com_www-supplyclinic-com-items-clinpro-clear-fluoride-treatment_e660d740c6.{json,section.md,full.md} (returned $233.81)
+INFO app.search: SKU 7772551 — aggregator price LOCKED $233.81 (4 sellers, badge_match=False) — https://www.supplyclinic.com/items/clinpro-clear-fluoride-tr
+INFO app.search: SKU 7772551 — scrape SUCCESS (markdown, stored 6143 of 6143 chars) — https://www.supplyclinic.com/items/clinpro-clear-fluoride-tr
+INFO app.search: SKU 7772551 — scraping net32.com (https://www.net32.com/ec/clinpro-clear-21-sodium-fluoride-treatment-05-d-182705) …
+INFO app.search: AGG_DEBUG wrote net32.com_www-net32-com-ec-top-quality-manufacturing-paper-tray-covers_35165eef78.{json,section.md,full.md} (returned $24.75)
+INFO app.search: SKU 1024081 — aggregator price LOCKED $24.75 (1 sellers, badge_match=True) — https://www.net32.com/ec/top-quality-manufacturing-paper-tra
+INFO app.search: SKU 1024081 — scrape SUCCESS (markdown, stored 9221 of 133872 chars) — https://www.net32.com/ec/top-quality-manufacturing-paper-tra
+INFO app.search: SKU 1024081 — scraping net32.com (https://www.net32.com/ec/essentials-85x1225-ritter-b-paper-tray-covers-d-188693) …
+INFO app.search: AGG_DEBUG wrote net32.com_www-net32-com-ec-clinpro-clear-21-sodium-fluoride-treatment_57354f712a.{json,section.md,full.md} (returned $120.44)
+INFO app.search: SKU 7772551 — aggregator price LOCKED $120.44 (8 sellers, badge_match=True) — https://www.net32.com/ec/clinpro-clear-21-sodium-fluoride-tr
+INFO app.search: SKU 7772551 — scrape SUCCESS (markdown, stored 10000 of 138682 chars) — https://www.net32.com/ec/clinpro-clear-21-sodium-fluoride-tr
+INFO app.search: SKU 7772551 — scraping net32.com (https://www.net32.com/ec/clinpro-clear-21-sodium-fluoride-treatment-05-d-182709) …
+INFO app.search: AGG_DEBUG wrote net32.com_www-net32-com-ec-essentials-85x1225-ritter-b-paper-tray-cove_c0e0a6c67e.{json,section.md,full.md} (returned $31.95)
+INFO app.search: SKU 1024081 — aggregator price LOCKED $31.95 (1 sellers, badge_match=True) — https://www.net32.com/ec/essentials-85x1225-ritter-b-paper-t
+INFO app.search: SKU 1024081 — scrape SUCCESS (markdown, stored 5845 of 129075 chars) — https://www.net32.com/ec/essentials-85x1225-ritter-b-paper-t
+INFO app.search: SKU 1024081 — scrape CACHE HIT (2826 chars, 0 credits) — https://www.crazydentalprices.com/Paper-Tray-Covers-PAP-B2
+INFO app.search: SKU 1024081 — scraping orthazone.com (https://www.orthazone.com/dental-treatment-accessories/dental-disposables-treatment-accessories/tray) …
+INFO app.search: AGG_DEBUG wrote net32.com_www-net32-com-ec-clinpro-clear-21-sodium-fluoride-treatment_36f4c68058.{json,section.md,full.md} (returned $240.9)
+INFO app.search: SKU 7772551 — aggregator price LOCKED $240.90 (2 sellers, badge_match=True) — https://www.net32.com/ec/clinpro-clear-21-sodium-fluoride-tr
+INFO app.search: SKU 7772551 — scrape SUCCESS (markdown, stored 6798 of 130838 chars) — https://www.net32.com/ec/clinpro-clear-21-sodium-fluoride-tr
+INFO app.search: SKU 7772551 — scrape CACHE HIT (4219 chars, 0 credits) — https://dentalwholesaledirect.com/preventives/3m-clinpro-cle
+INFO app.search: SKU 7772551 — scrape CACHE HIT (10000 chars, 0 credits) — https://ddsdentalsupplies.com/clinpro-clear-flavorless-fluor
+INFO app.search: SKU 7772551 — scrape CACHE HIT (10000 chars, 0 credits) — https://curio.dental/products/clinpro-clear-fluoride-0-5ml-1
+INFO app.search: SKU 7772551 — scrape CACHE HIT (3638 chars, 0 credits) — https://thedentalmarket.net/preventives/3m-clinpro-clear-flu
+WARNING app.search: SKU 7772551 — scrape: login wall (price gated, cached) at https://www.scottsdental.com/3m-clinpro-clear-fluoride-treatment.html
+WARNING app.search: SKU 7772551 — scrape: login wall (price gated, cached) at https://shop.benco.com/Product/6300-281/3m-clinpro-clear-fluoride-treatment-flav
+INFO app.search: SKU 7772551 — scraping pattersondental.com (https://www.pattersondental.com/Supplies/ItemDetail/071476704) …
+INFO app.search: SKU 1024081 — oversized page (217567 chars) — almost certainly a category/search listing, not a product page; skipping extraction
+INFO app.search: SKU 1024081 — scrape CACHE HIT (4486 chars, 0 credits) — https://medicalproductssupply.com/ritter-b-tray-cover-8-5-in
+INFO app.search: SKU 1024081 — scrape CACHE HIT (3782 chars, 0 credits) — https://www.graylinemedical.com/products/henry-schein-tray-c
+INFO app.search: SKU 1024081 — scrape CACHE HIT (10000 chars, 0 credits) — https://www.pstshop.com/8-1-2-x-12-1-4-aqua-ritter-tray-cove
+INFO app.search: SKU 1024081 — scrape CACHE HIT (2285 chars, 0 credits) — https://carolinadental.com/products/crosstex-tray-cover-size
+INFO app.search: SKU 1024081 — scrape CACHE HIT (7336 chars, 0 credits) — https://clinicalsupplycompany.com/products/posi-guard-tray-c
+INFO app.search: SKU 1024081 — scrape CACHE HIT (6974 chars, 0 credits) — https://smilestreamsolutions.com/products/tray-cover-8-5x12-
+INFO app.search: SKU 1024081 — scrape CACHE HIT (4957 chars, 0 credits) — https://3bsdahabicompany.com/products/tray-cover-1000-box-bl
+WARNING app.search: SKU 1024081 — scrape: login wall (price gated, cached) at http://shine-qatar.com/product/tray-cover-8-5x12-25-aqua-1000ca/
+INFO app.ai: SKU 1024081 — 12 scraped page(s): 12 cache hit(s), 0 to extract
+INFO app.matcher: SKU 1024081 — supplyclinic.com variant backstop: color mismatch (ordered aqua, page blue)
+INFO app.matcher: SKU 1024081 — crazydentalprices.com variant backstop: color mismatch (ordered aqua, page blue)
+INFO app.matcher: SKU 1024081 — clinicalsupplycompany.com variant backstop: color mismatch (ordered aqua, page blue)
+INFO app.matcher: SKU 1024081 — 3bsdahabicompany.com variant backstop: color mismatch (ordered aqua, page blue)
+INFO app.matcher: SKU 1024081 — pstshop.com MPN-confirmed (1024081 in listing) → price_match-eligible
+INFO app.matcher: SKU 1024081 — net32.com locked-price token-confirmed → price_match-eligible
+INFO app.matcher: SKU 1024081 — net32.com locked-price token-confirmed → price_match-eligible
+INFO app.matcher: SKU 1024081 — carolinadental.com flagged OUT OF STOCK (demoted; won't headline)
+INFO app.matcher: SKU 1024081 — clinicalsupplycompany.com flagged OUT OF STOCK (demoted; won't headline)
+INFO app.search: SKU 1126830 — market sweep starting (3 queries: Criterion N300 Glove Ice Blue Nitrile Small 300/Bx | nitrile dental examination gloves ice blue small 300 pack | Criterion 5703541 N300 Nitrile Glove)
+INFO app.search: SKU 1126830 — seeded 3 known-good URL(s) from seed_urls.txt
+WARNING app.search: SKU 1126830 — SerpAPI key missing; will rely on Firecrawl /search
+INFO app.search: SKU 1126830 — supplier gap-sweep: 68/70 suppliers missing from organic; 3 Firecrawl /search batch(es) (limit=40, 25 domains each) to fill gap
+INFO app.search: SKU 1126830 — storefront-feed fallback: +2 candidate(s) from shop catalogs
+INFO app.search: SKU 1126830 — SerpAPI unavailable; STAGE 2 Firecrawl /search (open web), credits left=988
+INFO app.search: Firecrawl /search (stage2-web) — +4 candidate(s) for 'Criterion N300 Glove Ice Blue Nitrile Sm' (credits used=2, left=986)
+INFO app.search: Firecrawl /search (stage2-web) — +6 candidate(s) for 'nitrile dental examination gloves ice bl' (credits used=2, left=984)
+INFO app.search: Firecrawl /search (stage2-web) — +3 candidate(s) for 'Criterion 5703541 N300 Nitrile Glove' (credits used=2, left=982)
+INFO app.search: SKU 1126830 — STAGE 3 supplier fallback (reserve=50 credits): Firecrawl /search restricted to 10 trusted domains
+INFO app.search: SKU 1126830 — sweep done: 9/17 shortlisted (cheapest=$31.99 at acesouthern.com)
+INFO app.search: SKU 1126830 — scraping net32.com (https://www.net32.com/ec/aurelia-sonic-nitrile-exam-gloves-small-300-d-151428) …
+WARNING app.search: SKU 7772551 — scrape: login wall (no public price shown) at https://www.pattersondental.com/Supplies/ItemDetail/071476704
+INFO app.search: SKU 7772551 — scraping pattersondental.com (https://www.pattersondental.com/Supplies/preventive-products/fluoride-varnishes/3m-clinpro-clear-flu) …
+INFO app.search: AGG_DEBUG wrote net32.com_www-net32-com-ec-aurelia-sonic-nitrile-exam-gloves-small-300_7d22837b4f.{json,section.md,full.md} (returned $14.45)
+INFO app.search: SKU 1126830 — aggregator price LOCKED $14.45 (7 sellers, badge_match=True) — https://www.net32.com/ec/aurelia-sonic-nitrile-exam-gloves-s
+INFO app.search: SKU 1126830 — scrape SUCCESS (markdown, stored 10000 of 120276 chars) — https://www.net32.com/ec/aurelia-sonic-nitrile-exam-gloves-s
+INFO app.search: SKU 1126830 — scraping acesouthern.com (https://www.acesouthern.com/product/criterion-n300-nitrile-exam-gloves-small-electric-blue-5703541) …
+WARNING app.search: SKU 7772551 — scrape: login wall (no public price shown) at https://www.pattersondental.com/Supplies/preventive-products/fluoride-varnishes/
+INFO app.search: SKU 7772551 — scrape CACHE HIT (10000 chars, 0 credits) — https://www.amtouch.com/shop-by-category/preventives/clinpro
+INFO app.search: SKU 7772551 — scrape CACHE HIT (3660 chars, 0 credits) — https://www.crazydentalprices.com/Clinpro-Clear-Fluoride-Tre
+INFO app.search: SKU 7772551 — scraping darbydental.com (https://www.darbydental.com/8900255.html) …
+INFO app.search: SKU 1126830 — scrape SUCCESS (markdown, stored 650 of 650 chars) — https://www.acesouthern.com/product/criterion-n300-nitrile-e
+INFO app.search: SKU 1126830 — FREE FETCH (0 credits) — structured $134.99 from https://myddssupply.com/products/3000-plastcare-usa-small-co
+INFO app.search: SKU 1126830 — FREE FETCH (0 credits) — structured $954.99 from https://myddssupply.com/products/18000-small-aurelia-sonic-3
+INFO app.search: SKU 1126830 — scraping afteractionmedical.com (https://afteractionmedical.com/shop/criterion-n300-ultra-nitrile-exam-gloves/) …
+INFO app.search: SKU 1126830 — scrape SUCCESS (markdown, stored 4722 of 4722 chars) — https://afteractionmedical.com/shop/criterion-n300-ultra-nit
+WARNING app.search: SKU 7772551 — scrape: login wall (price gated — 'login to see price') at https://www.darbydental.com/8900255.html
+INFO app.ai: SKU 7772551 — 9 scraped page(s): 9 cache hit(s), 0 to extract
+INFO app.matcher: SKU 7772551 — net32.com variant backstop: flavor mismatch (ordered 'no flavor', page 'watermelon')
+INFO app.matcher: SKU 7772551 — supplyclinic.com MPN-confirmed (7210FF in listing) → price_match-eligible
+INFO app.matcher: SKU 7772551 — locked price net32.com $120.44 flagged vs peer median $240.90
+INFO app.search: SKU 1126831 — market sweep starting (3 queries: Criterion N300 Glove Ice Blue Nitrile Medium 300/Bx | nitrile dental examination gloves ice blue medium 300 pack | Criterion 1126831 N300 Nitrile Glove)
+INFO app.search: SKU 1126831 — seeded 4 known-good URL(s) from seed_urls.txt
+WARNING app.search: SKU 1126831 — SerpAPI key missing; will rely on Firecrawl /search
+INFO app.search: SKU 1126831 — supplier gap-sweep: 67/70 suppliers missing from organic; 3 Firecrawl /search batch(es) (limit=40, 25 domains each) to fill gap
+INFO pipeline: Stage 1 done — SKU 7772551: 14 candidate(s), best_exact=$241.0 @ crazydentalprices.com
+INFO pipeline: Stage 1 done — SKU 1024081: 14 candidate(s), best_exact=$30.99 @ graylinemedical.com
+INFO app.search: Firecrawl /search (supplier-gap) — +4 candidate(s) for 'Criterion 1126831 N300 Nitrile Glove Ice' (credits used=2, left=980)
+INFO app.search: SKU 1126830 — scraping suprememed.com (https://www.suprememed.com/criterion-n300-nitrile-exam-gloves-standard-ice-blue-non-sterile/?attribu) …
+INFO app.search: Firecrawl /search (supplier-gap) — +2 candidate(s) for 'Criterion 1126831 N300 Nitrile Glove Ice' (credits used=2, left=978)
+INFO app.search: Firecrawl /search (supplier-gap) — +2 candidate(s) for 'Criterion 1126831 N300 Nitrile Glove Ice' (credits used=2, left=976)
+INFO app.search: SKU 1126831 — storefront-feed fallback: +2 candidate(s) from shop catalogs
+INFO app.search: SKU 1126831 — SerpAPI unavailable; STAGE 2 Firecrawl /search (open web), credits left=976
+INFO app.search: SKU 1126830 — scrape SUCCESS (markdown, stored 7786 of 24065 chars) — https://www.suprememed.com/criterion-n300-nitrile-exam-glove
+INFO app.search: Firecrawl /search (stage2-web) — +2 candidate(s) for 'Criterion N300 Glove Ice Blue Nitrile Me' (credits used=2, left=974)
+INFO app.search: Firecrawl /search (stage2-web) — +4 candidate(s) for 'nitrile dental examination gloves ice bl' (credits used=2, left=972)
+INFO app.search: SKU 1126830 — FREE FETCH (0 credits) — structured $17.38 from https://www.tdsc.com/All-Categories/Dental-Supplies/Infectio
+INFO app.search: Firecrawl /search (stage2-web) — +5 candidate(s) for 'Criterion 1126831 N300 Nitrile Glove' (credits used=2, left=970)
+INFO app.search: SKU 1126831 — STAGE 3 supplier fallback (reserve=50 credits): Firecrawl /search restricted to 10 trusted domains
+INFO app.search: SKU 1126830 — FREE FETCH (0 credits) — structured $25.99 from https://www.graylinemedical.com/products/henry-schein-gloves
+INFO app.search: SKU 1126831 — sweep done: 14/25 shortlisted (cheapest=$26.99 at pstshop.com)
+INFO app.search: SKU 1126831 — FREE FETCH (0 credits) — structured $20.00 from https://www.pstshop.com/large-criterion-n300-nitrile-pf-exam
+INFO app.search: SKU 1126830 — FREE FETCH (0 credits) — structured $16.90 from https://www.dentalcity.com/product/14422/dental-city-helium-
+INFO app.ai: SKU 1126830 — 9 scraped page(s): 9 cache hit(s), 0 to extract
+INFO app.matcher: SKU 1126830 — acesouthern.com MPN-confirmed (5703541 in listing) → price_match-eligible
+INFO app.matcher: SKU 1126830 — locked price net32.com $14.45 flagged vs peer median $31.99
+INFO app.search: SKU 7013349 — market sweep starting (3 queries: Zirconia Pre-Polish Wheel Medium Blue/Orange | dental zirconia pre-polish wheel medium blue orange | DCA06-170-HP-BL/O Zirconia Pre-Polish Wheel)
+INFO pipeline: Stage 1 done — SKU 1126830: 9 candidate(s), best_exact=$16.61 @ suprememed.com
+INFO app.search: SKU 7013349 — seeded 3 known-good URL(s) from seed_urls.txt
+INFO app.search: SKU 7013349 — discovery CACHE HIT: 38 known URL(s), skipping search (scrapes still run fresh)
+INFO app.search: SKU 7013349 — scraping supplyclinic.com (https://www.supplyclinic.com/items/zirconia-polisher-blue-orange-smoothing-wheel-11-0mm-hp-2-pk-meis) …
+INFO app.search: SKU 1126831 — FREE FETCH (0 credits) — structured $21.00 from https://www.pstshop.com/small-criterion-n300-nitrile-pf-exam
+INFO app.search: SKU 1126831 — scraping acesouthern.com (https://www.acesouthern.com/product/criterion-n300-nitrile-exam-gloves-large-electric-blue-5703543) …
+INFO app.search: AGG_DEBUG wrote supplyclinic.com_www-supplyclinic-com-items-zirconia-polisher-blue-orange-smo_ca4a46e676.{json,section.md,full.md} (returned $43.23)
+INFO app.search: SKU 7013349 — aggregator price LOCKED $43.23 (2 sellers, badge_match=False) — https://www.supplyclinic.com/items/zirconia-polisher-blue-or
+INFO app.search: SKU 7013349 — scrape SUCCESS (markdown, stored 4209 of 4209 chars) — https://www.supplyclinic.com/items/zirconia-polisher-blue-or
+INFO app.search: SKU 7013349 — scraping supplyclinic.com (https://www.supplyclinic.com/items/mei-zirconia-pre-polisher-handpiece-medium-wheel-dca06-blue-orang) …
+INFO app.search: SKU 1126831 — scrape SUCCESS (markdown, stored 1462 of 1462 chars) — https://www.acesouthern.com/product/criterion-n300-nitrile-e
+INFO app.search: SKU 1126831 — scraping acesouthern.com (https://www.acesouthern.com/product/criterion-nitrile-n300-glv-1126831) …
+INFO app.search: AGG_DEBUG wrote supplyclinic.com_www-supplyclinic-com-items-mei-zirconia-pre-polisher-handpie_88501c3f8a.{json,section.md,full.md} (returned $49.54)
+INFO app.search: SKU 7013349 — aggregator price LOCKED $49.54 (1 sellers, badge_match=False) — https://www.supplyclinic.com/items/mei-zirconia-pre-polisher
+INFO app.search: SKU 7013349 — scrape SUCCESS (markdown, stored 4362 of 4362 chars) — https://www.supplyclinic.com/items/mei-zirconia-pre-polisher
+INFO app.search: SKU 7013349 — scraping net32.com (https://www.net32.com/ec/meisinger-hp-dca06170-prepolish-wheel-shaped-polisher-d-189729) …
+INFO app.search: SKU 1126831 — scrape SUCCESS (markdown, stored 850 of 850 chars) — https://www.acesouthern.com/product/criterion-nitrile-n300-g
+INFO app.search: SKU 1126831 — scraping medicalproductssupply.com (https://medicalproductssupply.com/criterion-n300-nitrile-exam-gloves-medium-standard-ice-blue-non-st) …
+INFO app.search: AGG_DEBUG wrote net32.com_www-net32-com-ec-meisinger-hp-dca06170-prepolish-wheel-shape_57274dae3f.{json,section.md,full.md} (returned $50.95)
+INFO app.search: SKU 7013349 — aggregator price LOCKED $50.95 (1 sellers, badge_match=True) — https://www.net32.com/ec/meisinger-hp-dca06170-prepolish-whe
+INFO app.search: SKU 7013349 — scrape SUCCESS (markdown, stored 5591 of 135526 chars) — https://www.net32.com/ec/meisinger-hp-dca06170-prepolish-whe
+INFO app.search: SKU 7013349 — scraping net32.com (https://www.net32.com/ec/meisinger-twist-porcelain-hp-polisher-coarse-17mm-d-183734) …
+INFO app.search: SKU 1126831 — scrape SUCCESS (markdown, stored 5668 of 5668 chars) — https://medicalproductssupply.com/criterion-n300-nitrile-exa
+INFO app.search: SKU 1126831 — FREE FETCH (0 credits) — structured $159.99 from https://myddssupply.com/products/3000-medium-aurelia-sonic-3
+INFO app.search: SKU 1126831 — scraping medicalproductssupply.com (https://medicalproductssupply.com/criterion-n300-nitrile-exam-gloves-medium-standard-ice-blue-non-st) …
+INFO app.search: AGG_DEBUG wrote net32.com_www-net32-com-ec-meisinger-twist-porcelain-hp-polisher-coars_f4bff5bb04.{json,section.md,full.md} (returned $49.03)
+INFO app.search: SKU 7013349 — aggregator price LOCKED $49.03 (7 sellers, badge_match=True) — https://www.net32.com/ec/meisinger-twist-porcelain-hp-polish
+INFO app.search: SKU 7013349 — scrape SUCCESS (markdown, stored 10000 of 143120 chars) — https://www.net32.com/ec/meisinger-twist-porcelain-hp-polish
+INFO app.search: SKU 7013349 — scrape CACHE HIT (2700 chars, 0 credits) — https://www.crazydentalprices.com/Diamond-Polisher-Wheel-Med
+INFO app.search: SKU 7013349 — scrape CACHE HIT (9103 chars, 0 credits) — https://shop.benco.com/Product/4480-475/dca05-110-blueorange
+INFO app.search: SKU 7013349 — scrape CACHE HIT (10000 chars, 0 credits) — https://ddsdentalsupplies.com/meisinger-usa/?page=80
+INFO app.search: SKU 7013349 — scrape CACHE HIT (5526 chars, 0 credits) — https://www.safcodental.com/product/luster-zirconia-polisher
+INFO app.search: SKU 7013349 — scrape CACHE HIT (186 chars, 0 credits) — https://meisingerusa.com/dca06-170-hp-bl-o-polisher-diamond-
+INFO app.search: SKU 7013349 — scrape CACHE HIT (145 chars, 0 credits) — https://meisingerusa.com/dsu21-universal-extraoral-shaping-a
+INFO app.search: SKU 7013349 — scrape CACHE HIT (8691 chars, 0 credits) — https://www.avtecdental.com/products/universal-extraoral-sha
+INFO app.search: SKU 7013349 — scrape CACHE HIT (8806 chars, 0 credits) — https://www.avtecdental.com/products/universal-extraoral-sha
+WARNING app.search: SKU 7013349 — scrape: login wall (price gated, cached) at https://www.dhpsupply.com/item/740-DCA06170HPBLO/Diamond-Polisher-HP-Wheel/
+WARNING app.search: SKU 7013349 — scrape: login wall (price gated, cached) at https://www.dhpsupply.com/products/336/Finishing-Polishing/&pg=143
+INFO app.ai: SKU 7013349 — 12 scraped page(s): 12 cache hit(s), 0 to extract
+INFO app.matcher: SKU 7013349 — supplyclinic.com MPN-confirmed (DCA06-170-HP-BL/O in listing) → price_match-eligible
+INFO app.matcher: SKU 7013349 — meisingerusa.com MPN-confirmed (DCA06-170-HP-BL/O in listing) → price_match-eligible
+INFO app.matcher: SKU 7013349 — dhpsupply.com MPN-confirmed (DCA06-170-HP-BL/O in listing) → price_match-eligible
+INFO app.matcher: SKU 7013349 — supplyclinic.com locked-price token-confirmed → price_match-eligible
+INFO app.matcher: SKU 7013349 — net32.com locked-price token-confirmed → price_match-eligible
+INFO app.search: SKU 7013185 — market sweep starting (3 queries: Meisinger Polisher HP 9742M-040 2/Pk | dental polisher HP 9742M-040 2 pack | Meisinger 9742M-040-HP-BL/O Polisher HP)
+INFO app.search: SKU 7013185 — seeded 3 known-good URL(s) from seed_urls.txt
+INFO app.search: SKU 7013185 — discovery CACHE HIT: 26 known URL(s), skipping search (scrapes still run fresh)
+INFO app.search: SKU 7013185 — scraping net32.com (https://www.net32.com/ec/meisinger-hp-dca04040-prepolish-point-shaped-diamond-d-189736?vid=130&frt=3) …
+INFO app.search: SKU 1126831 — scrape SUCCESS (markdown, stored 5677 of 5677 chars) — https://medicalproductssupply.com/criterion-n300-nitrile-exa
+INFO app.search: SKU 1126831 — FREE FETCH (0 credits) — structured $954.99 from https://myddssupply.com/products/18000-medium-aurelia-sonic-
+INFO app.search: SKU 1126831 — scrape CACHE HIT (10000 chars, 0 credits) — https://www.tdsc.com/All-Categories/Dental-Supplies/Infectio
+INFO app.search: AGG_DEBUG wrote net32.com_www-net32-com-ec-meisinger-hp-dca04040-prepolish-point-shape_a914f4a4ac.{json,section.md,full.md} (returned $50.95)
+INFO app.search: SKU 7013185 — aggregator price LOCKED $50.95 (1 sellers, badge_match=True) — https://www.net32.com/ec/meisinger-hp-dca04040-prepolish-poi
+INFO app.search: SKU 7013185 — scrape SUCCESS (markdown, stored 10000 of 143903 chars) — https://www.net32.com/ec/meisinger-hp-dca04040-prepolish-poi
+INFO app.search: SKU 7013185 — scraping net32.com (https://www.net32.com/ec/meisinger-hp-9742f040-fine-point-shaped-diamond-d-189688) …
+INFO app.search: SKU 1126831 — FREE FETCH (0 credits) — structured $14.00 from https://www.mfidistribution.com/product-page/criterion-n300-
+INFO app.search: SKU 1126831 — scrape CACHE HIT (4722 chars, 0 credits) — https://afteractionmedical.com/shop/criterion-n300-ultra-nit
+INFO app.search: SKU 1126831 — scraping mfidistribution.com (https://www.mfidistribution.com/criterion-n300-nitrile-exam-gloves-medium-standard) …
+INFO app.search: SKU 1126831 — scrape SUCCESS (markdown, stored 111 of 111 chars) — https://www.mfidistribution.com/criterion-n300-nitrile-exam-
+INFO app.search: SKU 1126831 — FREE FETCH (0 credits) — structured $25.99 from https://www.graylinemedical.com/products/henry-schein-gloves
+INFO app.search: AGG_DEBUG wrote net32.com_www-net32-com-ec-meisinger-hp-9742f040-fine-point-shaped-dia_5318e57211.{json,section.md,full.md} (returned $48.3)
+INFO app.search: SKU 7013185 — aggregator price LOCKED $48.30 (1 sellers, badge_match=True) — https://www.net32.com/ec/meisinger-hp-9742f040-fine-point-sh
+INFO app.search: SKU 7013185 — scrape SUCCESS (markdown, stored 10000 of 142694 chars) — https://www.net32.com/ec/meisinger-hp-9742f040-fine-point-sh
+INFO app.search: SKU 7013185 — scrape CACHE HIT (7665 chars, 0 credits) — https://www.avtecdental.com/products/polisher-diamond-impreg
+INFO app.search: SKU 7013185 — scrape CACHE HIT (4406 chars, 0 credits) — https://www.dentalcity.com/product/21767/meisinger-ceramic-p
+INFO app.search: SKU 7013185 — scrape CACHE HIT (8956 chars, 0 credits) — https://shop.benco.com/Product/3163-373/9742-040-blueorange-
+INFO app.search: SKU 7013185 — scrape CACHE HIT (1436 chars, 0 credits) — https://www.crazydentalprices.com/Meisinger-Polishers-9742M-
+INFO app.search: SKU 7013185 — scrape CACHE HIT (2507 chars, 0 credits) — https://www.crazydentalprices.com/Meisinger-Polishers-9743F-
+INFO app.search: SKU 7013185 — scraping pattersondental.com (https://www.pattersondental.com/en-CA/Supplies/finishing-polishing-rotary-instruments/polishers/diam) …
+INFO app.search: SKU 1126831 — scraping suprememed.com (https://www.suprememed.com/criterion-n300-nitrile-exam-gloves-standard-ice-blue-non-sterile/) …
+WARNING app.search: SKU 7013185 — scrape: login wall (no public price shown) at https://www.pattersondental.com/en-CA/Supplies/finishing-polishing-rotary-instru
+INFO app.search: SKU 7013185 — scrape CACHE HIT (85 chars, 0 credits) — https://meisingerusa.com/polishers-abrasives?page=4
+INFO app.search: SKU 7013185 — scrape CACHE HIT (184 chars, 0 credits) — https://meisingerusa.com/9742g-040-hp-gr-o-polisher-diamond-
+WARNING app.search: SKU 7013185 — scrape: login wall (price gated, cached) at https://www.dhpsupply.com/products/336/Finishing-Polishing/&pg=141
+INFO app.search: SKU 7013185 — scrape CACHE HIT (7667 chars, 0 credits) — https://www.avtecdental.com/products/polisher-diamond-impreg
+WARNING app.search: SKU 7013185 — scrape: login wall (price gated, cached) at https://www.dhpsupply.com/item/740-9742G040HPGRO/Diamond-Polisher-HP-9742G-040/
+INFO app.search: SKU 7013185 — scrape CACHE HIT (8524 chars, 0 credits) — https://www.dentalproductshopper.com/finishing-polishing/fin
+INFO app.ai: SKU 7013185 — 11 scraped page(s): 10 cache hit(s), 1 to extract
+INFO app.search: SKU 1126831 — scrape SUCCESS (markdown, stored 7705 of 23189 chars) — https://www.suprememed.com/criterion-n300-nitrile-exam-glove
+INFO app.ai: SKU 1126831 — 14 scraped page(s): 14 cache hit(s), 0 to extract
+INFO app.matcher: SKU 1126831 — acesouthern.com MPN-confirmed (1126831 in listing) → price_match-eligible
+INFO app.matcher: SKU 1126831 — medicalproductssupply.com MPN-confirmed (1126831 in listing) → price_match-eligible
+INFO app.matcher: SKU 1126831 — medicalproductssupply.com MPN-confirmed (1126831 in listing) → price_match-eligible
+INFO app.matcher: SKU 1126831 — graylinemedical.com MPN-confirmed (1126831 in listing) → price_match-eligible
+INFO app.matcher: SKU 1126831 — flagged mfidistribution.com $14.00 as low outlier vs median $35.79
+INFO app.search: SKU 3250498 — market sweep starting (3 queries: Oral-B Glide Floss Deep Clean 4 meter Mint 72/Bx | dental floss deep clean 4 meter mint 72 pack | Oral-B 80779741 Glide Floss Deep Clean)
+INFO pipeline: Stage 1 done — SKU 1126831: 14 candidate(s), best_exact=$35.79 @ acesouthern.com
+INFO app.search: SKU 3250498 — seeded 3 known-good URL(s) from seed_urls.txt
+INFO pipeline: Stage 1 done — SKU 7013349: 14 candidate(s), best_exact=none
+WARNING app.search: SKU 3250498 — SerpAPI key missing; will rely on Firecrawl /search
+INFO app.search: SKU 3250498 — supplier gap-sweep: 67/70 suppliers missing from organic; 3 Firecrawl /search batch(es) (limit=40, 25 domains each) to fill gap
+INFO app.search: Firecrawl /search (supplier-gap) — +26 candidate(s) for 'Oral-B 80779741 Glide Floss Deep Clean M' (credits used=8, left=962)
+INFO app.search: Firecrawl /search (supplier-gap) — +1 candidate(s) for 'Oral-B 80779741 Glide Floss Deep Clean M' (credits used=2, left=960)
+INFO app.search: Firecrawl /search (supplier-gap) — +2 candidate(s) for 'Oral-B 80779741 Glide Floss Deep Clean M' (credits used=2, left=958)
+INFO httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/openai/chat/completions "HTTP/1.1 200 OK"
+INFO app.matcher: SKU 7013185 — avtecdental.com MPN-confirmed (9742M-040-HP-BL/O in listing) → price_match-eligible
+INFO app.matcher: SKU 7013185 — crazydentalprices.com MPN-confirmed (9742M-040-HP-BL/O in listing) → price_match-eligible
+INFO app.matcher: SKU 7013185 — avtecdental.com MPN-confirmed (9742M-040-HP-BL/O in listing) → price_match-eligible
+INFO app.matcher: SKU 7013185 — net32.com locked-price token-confirmed → price_match-eligible
+INFO app.matcher: SKU 7013185 — net32.com locked-price token-confirmed → price_match-eligible
+INFO app.search: SKU 9872474 — market sweep starting (3 queries: Sharps Container Counter Balanced 3 Gallon Red | dental sharps container counter balanced 3 gallon red | 305436 Sharps Container Counter Balanced)
+INFO pipeline: Stage 1 done — SKU 7013185: 14 candidate(s), best_exact=$45.49 @ crazydentalprices.com
+INFO app.search: SKU 9872474 — seeded 3 known-good URL(s) from seed_urls.txt
+INFO app.search: SKU 9872474 — discovery CACHE HIT: 38 known URL(s), skipping search (scrapes still run fresh)
+INFO app.search: SKU 9872474 — scraping supplyclinic.com (https://www.supplyclinic.com/items/sharps-collectors-3-gallon-red-crosstex-305436) …
+INFO app.search: AGG_DEBUG wrote supplyclinic.com_www-supplyclinic-com-items-sharps-collectors-3-gallon-red-cr_1515563a9b.{json,section.md,full.md} (returned $154.67)
+INFO app.search: SKU 9872474 — aggregator price LOCKED $154.67 (1 sellers, badge_match=False) — https://www.supplyclinic.com/items/sharps-collectors-3-gallo
+INFO app.search: SKU 9872474 — scrape SUCCESS (markdown, stored 2331 of 2331 chars) — https://www.supplyclinic.com/items/sharps-collectors-3-gallo
+INFO app.search: SKU 9872474 — scraping net32.com (https://www.net32.com/ec/bd-sharps-collector-3-gallon-next-generation-d-114715) …
+INFO app.search: AGG_DEBUG wrote net32.com_www-net32-com-ec-bd-sharps-collector-3-gallon-next-generatio_de8df45734.{json,section.md,full.md} (returned $18.5)
+INFO app.search: SKU 9872474 — aggregator price LOCKED $18.50 (2 sellers, badge_match=True) — https://www.net32.com/ec/bd-sharps-collector-3-gallon-next-g
+INFO app.search: SKU 9872474 — scrape SUCCESS (markdown, stored 10000 of 122813 chars) — https://www.net32.com/ec/bd-sharps-collector-3-gallon-next-g
+INFO app.search: SKU 9872474 — scrape CACHE HIT (2502 chars, 0 credits) — https://www.vitalitymedical.com/3-gallon-bd-patient-room-sha
+INFO app.search: SKU 9872474 — scrape CACHE HIT (10000 chars, 0 credits) — https://ddsdentalsupplies.com/crosstex-305436/
+INFO app.search: SKU 9872474 — scrape CACHE HIT (10000 chars, 0 credits) — https://www.usamedicalsurgical.com/bd-patient-room-sharps-co
+INFO app.search: SKU 9872474 — scrape CACHE HIT (10000 chars, 0 credits) — https://optimusdentalsupply.com/infection-control/bd-sharps-
+INFO app.search: SKU 9872474 — scrape CACHE HIT (10000 chars, 0 credits) — https://optimusdentalsupply.com/bd-sharps-collector/
+INFO app.search: SKU 9872474 — scrape CACHE HIT (10000 chars, 0 credits) — https://www.pstshop.com/3-gallon-red-sharps-container-10-cas
+INFO app.search: SKU 9872474 — scrape CACHE HIT (10000 chars, 0 credits) — https://www.pstshop.com/3-gallon-red-sharps-collector-10-cas
+INFO app.search: SKU 9872474 — scrape CACHE HIT (4374 chars, 0 credits) — https://www.graylinemedical.com/products/bd-patient-room-sha
+INFO app.search: SKU 9872474 — scrape CACHE HIT (4952 chars, 0 credits) — https://www.graylinemedical.com/products/counterbalanced-doo
+INFO app.search: SKU 9872474 — scrape CACHE HIT (5852 chars, 0 credits) — https://www.lexiconsupply.com/products/bd-multi-purpose-shar
+INFO app.search: SKU 9872474 — scrape CACHE HIT (10000 chars, 0 credits) — https://medexsupply.com/bd-sharps-collector-red-3-gallon/
+INFO app.search: SKU 9872474 — scrape CACHE HIT (10000 chars, 0 credits) — https://www.allfordentist.com/multi-use-one-piece-sharps-con
+INFO app.ai: SKU 9872474 — 14 scraped page(s): 10 cache hit(s), 4 to extract
+INFO httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/openai/chat/completions "HTTP/1.1 200 OK"
+INFO app.search: SKU 3250498 — SerpAPI unavailable; STAGE 2 Firecrawl /search (open web), credits left=958
+INFO app.search: Firecrawl /search (stage2-web) — +3 candidate(s) for 'Oral-B Glide Floss Deep Clean 4 meter Mi' (credits used=2, left=956)
+INFO app.search: Firecrawl /search (stage2-web) — +2 candidate(s) for 'dental floss deep clean 4 meter mint 72 ' (credits used=2, left=954)
+INFO httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/openai/chat/completions "HTTP/1.1 200 OK"
+INFO app.matcher: SKU 9872474 — supplyclinic.com MPN-confirmed (305436 in listing) → price_match-eligible
+INFO app.matcher: SKU 9872474 — vitalitymedical.com MPN-confirmed (305436 in listing) → price_match-eligible
+INFO app.matcher: SKU 9872474 — ddsdentalsupplies.com MPN-confirmed (305436 in listing) → price_match-eligible
+INFO app.matcher: SKU 9872474 — pstshop.com MPN-confirmed (305436 in listing) → price_match-eligible
+INFO app.matcher: SKU 9872474 — graylinemedical.com MPN-confirmed (305436 in listing) → price_match-eligible
+INFO app.matcher: SKU 9872474 — graylinemedical.com flagged OUT OF STOCK (demoted; won't headline)
+INFO app.search: SKU 3120114 — market sweep starting (3 queries: ReSURGE Instrument Cleaning Solution 33oz/Bt | dental instrument cleaning solution 33oz bottle | ReSURGE 21521 Instrument Cleaning Solution)
+INFO app.search: SKU 3120114 — seeded 3 known-good URL(s) from seed_urls.txt
+INFO app.search: SKU 3120114 — discovery CACHE HIT: 14 known URL(s), skipping search (scrapes still run fresh)
+INFO app.search: SKU 3120114 — scraping supplyclinic.com (https://www.supplyclinic.com/items/resurge-instrument-cleaning-solution-33-oz-33oz-bt-dentsply-siron) …
+INFO app.search: Firecrawl /search (stage2-web) — +2 candidate(s) for 'Oral-B 80779741 Glide Floss Deep Clean' (credits used=2, left=952)
+INFO app.search: SKU 3250498 — STAGE 3 supplier fallback (reserve=50 credits): Firecrawl /search restricted to 10 trusted domains
+INFO app.search: Firecrawl /search (stage3-suppliers) — +5 candidate(s) for 'Oral-B 80779741 Glide Floss Deep Clean M' (credits used=2, left=950)
+INFO app.search: SKU 3250498 — discovery relevance filter dropped 1 off-topic URL(s) (44 → 43)
+INFO app.search: SKU 3250498 — sweep done: 14/43 shortlisted (cheapest=$6.2 at crazydentalprices.com)
+INFO app.search: SKU 3250498 — scrape CACHE HIT (3294 chars, 0 credits) — https://www.crazydentalprices.com/Oral-B-Glide-Healthy-Gums-
+INFO app.search: AGG_DEBUG wrote supplyclinic.com_www-supplyclinic-com-items-resurge-instrument-cleaning-solut_b65f20f44b.{json,section.md,full.md} (returned $104.64)
+INFO app.search: SKU 3120114 — aggregator price LOCKED $104.64 (1 sellers, badge_match=False) — https://www.supplyclinic.com/items/resurge-instrument-cleani
+INFO app.search: SKU 3120114 — scrape SUCCESS (markdown, stored 2573 of 2573 chars) — https://www.supplyclinic.com/items/resurge-instrument-cleani
+INFO app.search: SKU 3120114 — scrape CACHE HIT (4013 chars, 0 credits) — https://thedentalmarket.net/featured-items/resurge-instrumen
+INFO app.search: SKU 3120114 — scrape CACHE HIT (10000 chars, 0 credits) — https://ddsdentalsupplies.com/sultan-healthcare-resurge-inst
+INFO app.search: SKU 3120114 — scrape CACHE HIT (4699 chars, 0 credits) — https://www.safcodental.com/product/resurge-trade
+INFO app.search: SKU 3250498 — FREE FETCH (0 credits) — structured $44.99 from https://www.safcodental.com/product/oral-b-sup-reg-sup-glide
+INFO app.search: SKU 3120114 — scraping pattersondental.com (https://www.pattersondental.com/en-CA/Supplies/ItemDetail/076649313) …
+INFO app.search: SKU 3250498 — scraping crazydentalprices.com (https://www.crazydentalprices.com/Pro-Health-Glide-Floss-Procter-Gamble-80779742) …
+WARNING app.search: SKU 3120114 — scrape: login wall (no public price shown) at https://www.pattersondental.com/en-CA/Supplies/ItemDetail/076649313
+INFO app.search: SKU 3120114 — scrape CACHE HIT (10000 chars, 0 credits) — https://ddsdentalsupplies.com/resurge-inst-cleaning-solution
+INFO app.search: SKU 3120114 — scrape CACHE HIT (10000 chars, 0 credits) — https://www.tdsc.com/All-Categories/Dental-Supplies/Infectio
+INFO app.search: SKU 3120114 — scrape CACHE HIT (10000 chars, 0 credits) — https://newarkdentalpemco.com/products/resurge-inst-cleaning
+INFO app.search: SKU 3120114 — scrape CACHE HIT (8887 chars, 0 credits) — https://shop.benco.com/Product/4537-879/resurge-instrument-c
+INFO app.search: SKU 3120114 — scrape CACHE HIT (4016 chars, 0 credits) — https://supplydoc.com/products/resurge-instrument-cleaning-s
+INFO app.search: SKU 3120114 — scrape CACHE HIT (4536 chars, 0 credits) — https://www.purelifedental.com/resurge-instrument-cleaning-s
+INFO app.search: SKU 3120114 — scrape CACHE HIT (5024 chars, 0 credits) — https://dentaladvisor.com/clinical-evaluation/resurge/
+INFO app.search: SKU 3120114 — scrape CACHE HIT (1501 chars, 0 credits) — https://www.ciamedical.com/sultan-healthcare-21521-case-resu
+INFO app.search: SKU 3120114 — scrape CACHE HIT (7276 chars, 0 credits) — https://www.offthecusp.com/resurge-revolutionary-new-dental-
+INFO app.ai: SKU 3120114 — 13 scraped page(s): 9 cache hit(s), 4 to extract
+INFO app.search: SKU 3250498 — scrape SUCCESS (markdown, stored 3413 of 30817 chars) — https://www.crazydentalprices.com/Pro-Health-Glide-Floss-Pro
+INFO httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/openai/chat/completions "HTTP/1.1 200 OK"
+INFO app.search: SKU 3250498 — scraping ddsdentalsupplies.com (https://ddsdentalsupplies.com/floss-5/) …
+INFO httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/openai/chat/completions "HTTP/1.1 200 OK"
+INFO app.matcher: SKU 3120114 — supplyclinic.com MPN-confirmed (21521 in listing) → price_match-eligible
+INFO app.matcher: SKU 3120114 — supplydoc.com MPN-confirmed (21521 in listing) → price_match-eligible
+INFO app.matcher: SKU 3120114 — ciamedical.com MPN-confirmed (21521 in listing) → price_match-eligible
+INFO app.matcher: SKU 3120114 — purelifedental.com flagged OUT OF STOCK (demoted; won't headline)
+INFO app.search: SKU 1403081 — market sweep starting (3 queries: CaviWipes 2.0 Wipes 6"x6.75" 160/Cn | dental disinfectant wipes 6"x6.75" 160 count | CaviWipes 2.0 14-1100 Wipes)
+INFO app.search: SKU 1403081 — seeded 3 known-good URL(s) from seed_urls.txt
+INFO app.search: SKU 1403081 — discovery CACHE HIT: 40 known URL(s), skipping search (scrapes still run fresh)
+INFO app.search: SKU 1403081 — scraping net32.com (https://www.net32.com/ec/caviwipes-20-disinfectant-wipes-6x675-160-enhanced-d-170013) …
+INFO app.search: SKU 3250498 — scrape SUCCESS (markdown, stored 10000 of 89785 chars) — https://ddsdentalsupplies.com/floss-5/
+INFO app.search: SKU 3250498 — scraping shop.benco.com (https://shop.benco.com/Product/3777-559/oral-b-glide-deep-clean-floss-trial-size-4m-box-of) …
+INFO app.search: AGG_DEBUG wrote net32.com_www-net32-com-ec-caviwipes-20-disinfectant-wipes-6x675-160-e_3d702fba85.{json,section.md,full.md} (returned $10.11)
+INFO app.search: SKU 1403081 — aggregator price LOCKED $10.11 (18 sellers, badge_match=True) — https://www.net32.com/ec/caviwipes-20-disinfectant-wipes-6x6
+INFO app.search: SKU 1403081 — scrape SUCCESS (markdown, stored 10000 of 130807 chars) — https://www.net32.com/ec/caviwipes-20-disinfectant-wipes-6x6
+INFO app.search: SKU 1403081 — scraping supplyclinic.com (https://www.supplyclinic.com/items/caviwipes-2-0-large-160-can-x-12-cs-metrex-14-1100-cs) …
+INFO app.search: SKU 3250498 — scrape SUCCESS (markdown, stored 8720 of 8720 chars) — https://shop.benco.com/Product/3777-559/oral-b-glide-deep-cl
+INFO app.search: AGG_DEBUG wrote supplyclinic.com_www-supplyclinic-com-items-caviwipes-2-0-large-160-can-x-12_99e7e34c9d.{json,section.md,full.md} (returned $141.56)
+INFO app.search: SKU 1403081 — aggregator price LOCKED $141.56 (2 sellers, badge_match=False) — https://www.supplyclinic.com/items/caviwipes-2-0-large-160-c
+INFO app.search: SKU 1403081 — scrape SUCCESS (markdown, stored 4783 of 4783 chars) — https://www.supplyclinic.com/items/caviwipes-2-0-large-160-c
+INFO app.search: SKU 1403081 — scraping supplyclinic.com (https://www.supplyclinic.com/items/caviwipes-2-0-disinfectant-wipes-6-x-6-75-160-can-metrex-14-1100-) …
+INFO app.search: SKU 3250498 — FREE FETCH (0 credits) — structured $45.00 from https://www.pstshop.com/oral-b-glide-deep-clean-floss-with-c
+INFO app.search: SKU 3250498 — FREE FETCH (0 credits) — structured $70.00 from https://www.pstshop.com/oral-b-glide-pro-health-deep-clean-f
+INFO app.search: SKU 3250498 — FREE FETCH (0 credits) — structured $44.17 from https://ddsdentalsupplies.com/deep-clean-floss-4m-trial-siz/
+INFO app.search: AGG_DEBUG wrote supplyclinic.com_www-supplyclinic-com-items-caviwipes-2-0-disinfectant-wipes_d4b885ae2f.{json,section.md,full.md} (returned $18.39)
+INFO app.search: SKU 1403081 — aggregator price LOCKED $18.39 (1 sellers, badge_match=False) — https://www.supplyclinic.com/items/caviwipes-2-0-disinfectan
+INFO app.search: SKU 1403081 — scrape SUCCESS (markdown, stored 2570 of 2570 chars) — https://www.supplyclinic.com/items/caviwipes-2-0-disinfectan
+INFO app.search: SKU 1403081 — scrape CACHE HIT (2968 chars, 0 credits) — https://www.crazydentalprices.com/CaviWipes-2.0-14-1100_2
+INFO app.search: SKU 1403081 — scrape CACHE HIT (10000 chars, 0 credits) — https://honestmed.com/shop/Housekeeping-&-Cleaning-Supplies/
+INFO app.search: SKU 1403081 — scrape CACHE HIT (10000 chars, 0 credits) — https://www.pstshop.com/caviwipes-2-0-xl-disinfecting-wipes-
+INFO app.search: SKU 1403081 — scrape CACHE HIT (4256 chars, 0 credits) — https://www.safcodental.com/product/caviwipes-trade-2-0
+INFO app.search: SKU 1403081 — scrape CACHE HIT (4004 chars, 0 credits) — https://www.dentalcity.com/product/20896/kerr-caviwipes-20-d
+INFO app.search: SKU 1403081 — scrape CACHE HIT (3900 chars, 0 credits) — https://thedentalmarket.net/featured-items/caviwipes-2-0-dis
+INFO app.search: SKU 1403081 — scrape CACHE HIT (8860 chars, 0 credits) — https://www.pearsondental.com/catalog/product.asp?majcatid=1
+INFO app.search: SKU 1403081 — scrape CACHE HIT (10000 chars, 0 credits) — https://www.skydentalsupply.com/files/products/CaviWipes%202
+WARNING app.search: SKU 1403081 — scrape: login wall (price gated, cached) at https://www.scottsdental.com/caviwipes-2-0.html
+INFO app.search: SKU 3250498 — FREE FETCH (0 credits) — structured $47.95 from https://thedentalmarket.net/preventives/oral-b-deep-clean-fl
+INFO app.search: SKU 1403081 — scraping pattersondental.com (https://www.pattersondental.com/Supplies/sterilization-disinfectant-cleaners/surface-disinfectant-wi) …
+INFO app.search: SKU 3250498 — scraping orthazone.com (https://www.orthazone.com/209-fdt-glide-floss-pro-heah-original-4m-72cs-6265) …
+WARNING app.search: SKU 1403081 — scrape: login wall (no public price shown) at https://www.pattersondental.com/Supplies/sterilization-disinfectant-cleaners/sur
+INFO app.search: SKU 1403081 — scrape CACHE HIT (10000 chars, 0 credits) — https://curio.dental/products/caviwipes-2-0-large-160-can-x-
+INFO app.ai: SKU 1403081 — 12 scraped page(s): 11 cache hit(s), 1 to extract
+INFO app.search: SKU 3250498 — oversized page (206419 chars) — almost certainly a category/search listing, not a product page; skipping extraction
+INFO app.search: SKU 3250498 — scraping pattersondental.com (https://www.pattersondental.com/Supplies/ItemDetail/073445616) …
+INFO httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/openai/chat/completions "HTTP/1.1 200 OK"
+INFO app.matcher: SKU 1403081 — supplyclinic.com MPN-confirmed (14-1100 in listing) → price_match-eligible
+INFO app.matcher: SKU 1403081 — supplyclinic.com MPN-confirmed (14-1100 in listing) → price_match-eligible
+INFO app.matcher: SKU 1403081 — crazydentalprices.com MPN-confirmed (14-1100 in listing) → price_match-eligible
+INFO app.search: SKU 3333468 — market sweep starting (3 queries: GC Fuji II LC Capsules A3.5 48/Bx | glass ionomer restorative capsules A3.5 48 pack | GC 425004 Fuji II LC Capsules)
+INFO app.search: SKU 3333468 — seeded 6 known-good URL(s) from seed_urls.txt
+WARNING app.search: SKU 3333468 — SerpAPI key missing; will rely on Firecrawl /search
+INFO app.search: SKU 3333468 — supplier gap-sweep: 64/70 suppliers missing from organic; 3 Firecrawl /search batch(es) (limit=40, 25 domains each) to fill gap
+WARNING app.search: SKU 3250498 — scrape: login wall (no public price shown) at https://www.pattersondental.com/Supplies/ItemDetail/073445616
+INFO app.search: Firecrawl /search (supplier-gap) — +10 candidate(s) for 'GC 425004 Fuji II LC Capsules A3.5' (credits used=2, left=948)
+INFO app.search: SKU 3250498 — scraping darbydental.com (https://www.darbydental.com/9508457.html) …
+INFO app.search: Firecrawl /search (supplier-gap) — +1 candidate(s) for 'GC 425004 Fuji II LC Capsules A3.5' (credits used=2, left=946)
+INFO app.search: Firecrawl /search (supplier-gap) — +5 candidate(s) for 'GC 425004 Fuji II LC Capsules A3.5' (credits used=2, left=944)
+WARNING app.search: SKU 3250498 — scrape: login wall (price gated — 'login to see price') at https://www.darbydental.com/9508457.html
+INFO app.search: SKU 3250498 — scraping scottsdental.com (https://www.scottsdental.com/oral-b-glide-pro-health-deep-clean-floss.html) …
+WARNING app.search: SKU 3250498 — scrape: login wall (price gated — 'login to see price') at https://www.scottsdental.com/oral-b-glide-pro-health-deep-clean-floss.html
+INFO app.search: SKU 3250498 — FREE FETCH (0 credits) — structured $44.99 from https://surgimac.com/products/deep-clean-floss-4m-trial-size
+INFO app.ai: SKU 3250498 — 10 scraped page(s): 10 cache hit(s), 0 to extract
+INFO app.matcher: SKU 3250498 — pstshop.com MPN-confirmed (80779741 in listing) → price_match-eligible
+INFO app.matcher: SKU 3250498 — darbydental.com MPN-confirmed (80779741 in listing) → price_match-eligible
+INFO app.matcher: SKU 3250498 — flagged crazydentalprices.com $6.20 as low outlier vs median $48.17
+INFO app.matcher: SKU 3250498 — flagged crazydentalprices.com $11.25 as low outlier vs median $48.17
+INFO app.search: SKU 3333466 — market sweep starting (3 queries: GC Fuji II LC Capsules A3 48/Bx | glass ionomer restorative capsules A3 48 pack | GC 425003 Fuji II LC Capsules)
+INFO app.search: SKU 3333466 — seeded 6 known-good URL(s) from seed_urls.txt
+WARNING app.search: SKU 3333466 — SerpAPI key missing; will rely on Firecrawl /search
+INFO app.search: SKU 3333466 — supplier gap-sweep: 64/70 suppliers missing from organic; 3 Firecrawl /search batch(es) (limit=40, 25 domains each) to fill gap
+INFO pipeline: Stage 1 done — SKU 3250498: 14 candidate(s), best_exact=none
+INFO pipeline: Stage 1 done — SKU 9872474: 14 candidate(s), best_exact=$16.17 @ vitalitymedical.com
+INFO pipeline: Stage 1 done — SKU 3120114: 14 candidate(s), best_exact=$66.29 @ newarkdentalpemco.com
+INFO pipeline: Stage 1 done — SKU 1403081: 14 candidate(s), best_exact=$10.08 @ crazydentalprices.com
+INFO app.search: Firecrawl /search (supplier-gap) — +10 candidate(s) for 'GC 425003 Fuji II LC Capsules A3' (credits used=2, left=942)
+INFO app.search: SKU 3333468 — SerpAPI unavailable; STAGE 2 Firecrawl /search (open web), credits left=942
+INFO app.search: Firecrawl /search (supplier-gap) — +1 candidate(s) for 'GC 425003 Fuji II LC Capsules A3' (credits used=2, left=940)
+INFO app.search: Firecrawl /search (stage2-web) — +3 candidate(s) for 'GC Fuji II LC Capsules A3.5 48/Bx' (credits used=2, left=938)
+INFO app.search: Firecrawl /search (supplier-gap) — +4 candidate(s) for 'GC 425003 Fuji II LC Capsules A3' (credits used=2, left=936)
+INFO app.search: SKU 3333466 — SerpAPI unavailable; STAGE 2 Firecrawl /search (open web), credits left=936
+INFO app.search: Firecrawl /search (stage2-web) — +5 candidate(s) for 'glass ionomer restorative capsules A3.5 ' (credits used=2, left=934)
+INFO app.search: Firecrawl /search (stage2-web) — +4 candidate(s) for 'GC Fuji II LC Capsules A3 48/Bx' (credits used=2, left=932)
+INFO app.search: SKU 3333468 — STAGE 3 supplier fallback (reserve=50 credits): Firecrawl /search restricted to 10 trusted domains
+INFO app.search: Firecrawl /search (stage2-web) — +5 candidate(s) for 'glass ionomer restorative capsules A3 48' (credits used=2, left=928)
+INFO app.search: Firecrawl /search (stage3-suppliers) — +6 candidate(s) for 'GC 425004 Fuji II LC Capsules A3.5' (credits used=2, left=926)
+INFO app.search: SKU 3333468 — discovery relevance filter dropped 2 off-topic URL(s) (36 → 34)
+INFO app.search: SKU 3333468 — sweep done: 9/34 shortlisted (cheapest=$299.0 at net32.com)
+INFO app.search: SKU 3333468 — scraping supplyclinic.com (https://www.supplyclinic.com/items/fuji-ii-lc-capsules-a3-5-48-bx-gc-america-425004) …
+INFO app.search: Firecrawl /search (stage2-web) — +1 candidate(s) for 'GC 425003 Fuji II LC Capsules' (credits used=2, left=924)
+INFO app.search: SKU 3333466 — STAGE 3 supplier fallback (reserve=50 credits): Firecrawl /search restricted to 10 trusted domains
+INFO app.search: Firecrawl /search (stage3-suppliers) — +7 candidate(s) for 'GC 425003 Fuji II LC Capsules A3' (credits used=2, left=922)
+INFO app.search: SKU 3333466 — discovery relevance filter dropped 3 off-topic URL(s) (38 → 35)
+INFO app.search: SKU 3333466 — sweep done: 12/35 shortlisted (cheapest=$173.48 at frontierdental.com)
+INFO app.search: SKU 3333466 — scraping supplyclinic.com (https://www.supplyclinic.com/items/fuji-ii-lc-capsules-a3-48-bx-gc-america-425003?kw=&cpn=2379578516) …
+INFO app.search: AGG_DEBUG wrote supplyclinic.com_www-supplyclinic-com-items-fuji-ii-lc-capsules-a3-5-48-bx-gc_137ace252b.{json,section.md,full.md} (returned $330.94)
+INFO app.search: SKU 3333468 — aggregator price LOCKED $330.94 (3 sellers, badge_match=False) — https://www.supplyclinic.com/items/fuji-ii-lc-capsules-a3-5-
+INFO app.search: SKU 3333468 — scrape SUCCESS (markdown, stored 6608 of 6608 chars) — https://www.supplyclinic.com/items/fuji-ii-lc-capsules-a3-5-
+INFO app.search: SKU 3333468 — scraping net32.com (https://www.net32.com/ec/gc-fuji-ii-lc-a35-capsules-48-d-130428) …
+INFO app.search: AGG_DEBUG wrote supplyclinic.com_www-supplyclinic-com-items-fuji-ii-lc-capsules-a3-48-bx-gc-a_142e63bf3e.{json,section.md,full.md} (returned $319.32)
+INFO app.search: SKU 3333466 — aggregator price LOCKED $319.32 (4 sellers, badge_match=False) — https://www.supplyclinic.com/items/fuji-ii-lc-capsules-a3-48
+INFO app.search: SKU 3333466 — scrape SUCCESS (markdown, stored 6257 of 6257 chars) — https://www.supplyclinic.com/items/fuji-ii-lc-capsules-a3-48
+INFO app.search: SKU 3333466 — scraping net32.com (https://www.net32.com/ec/gc-fuji-ii-lc-a3-capsules-50-d-20149) …
+INFO app.search: AGG_DEBUG wrote net32.com_www-net32-com-ec-gc-fuji-ii-lc-a35-capsules-48-d-130428_806a716ebe.{json,section.md,full.md} (returned $355.62)
+INFO app.search: SKU 3333468 — aggregator price LOCKED $355.62 (8 sellers, badge_match=True) — https://www.net32.com/ec/gc-fuji-ii-lc-a35-capsules-48-d-130
+INFO app.search: SKU 3333468 — scrape SUCCESS (markdown, stored 10000 of 128192 chars) — https://www.net32.com/ec/gc-fuji-ii-lc-a35-capsules-48-d-130
+INFO app.search: SKU 3333468 — scraping net32.com (https://www.net32.com/ec/gc-fuji-ii-lc-a35-capsules-50-d-20091) …
+INFO app.search: AGG_DEBUG wrote net32.com_www-net32-com-ec-gc-fuji-ii-lc-a3-capsules-50-d-20149_36134e54d0.{json,section.md,full.md} (returned $208.83)
+INFO app.search: SKU 3333466 — aggregator price LOCKED $208.83 (10 sellers, badge_match=True) — https://www.net32.com/ec/gc-fuji-ii-lc-a3-capsules-50-d-2014
+INFO app.search: SKU 3333466 — scrape SUCCESS (markdown, stored 10000 of 142387 chars) — https://www.net32.com/ec/gc-fuji-ii-lc-a3-capsules-50-d-2014
+INFO app.search: SKU 3333466 — scraping frontierdental.com (https://www.frontierdental.com/us/en/product/fuji-ii-lc-glass-ionomer-restorative-light-cure-capsule) …
+INFO app.search: AGG_DEBUG wrote net32.com_www-net32-com-ec-gc-fuji-ii-lc-a35-capsules-50-d-20091_cc1abad004.{json,section.md,full.md} (returned $299.95)
+INFO app.search: SKU 3333468 — aggregator price LOCKED $299.95 (1 sellers, badge_match=True) — https://www.net32.com/ec/gc-fuji-ii-lc-a35-capsules-50-d-200
+INFO app.search: SKU 3333468 — scrape SUCCESS (markdown, stored 5653 of 133109 chars) — https://www.net32.com/ec/gc-fuji-ii-lc-a35-capsules-50-d-200
+INFO app.search: SKU 3333468 — scraping crazydentalprices.com (https://www.crazydentalprices.com/Fuji-II-LC-Capsules-425005?leadsource=Jolt_CDP) …
+INFO app.search: SKU 3333466 — scrape SUCCESS (markdown, stored 10000 of 56487 chars) — https://www.frontierdental.com/us/en/product/fuji-ii-lc-glas
+INFO app.search: SKU 3333466 — scraping crazydentalprices.com (https://www.crazydentalprices.com/Fuji-II-LC-Capsules-425005?leadsource=Jolt_CDP) …
+INFO app.search: SKU 3333468 — scrape SUCCESS (markdown, stored 2710 of 28439 chars) — https://www.crazydentalprices.com/Fuji-II-LC-Capsules-425005
+INFO app.search: SKU 3333468 — scraping crazydentalprices.com (https://www.crazydentalprices.com/Fuji-II-LC-Capsules-425003) …
+INFO app.search: SKU 3333466 — scrape SUCCESS (markdown, stored 2710 of 28439 chars) — https://www.crazydentalprices.com/Fuji-II-LC-Capsules-425005
+INFO app.search: SKU 3333468 — scrape SUCCESS (markdown, stored 2694 of 27965 chars) — https://www.crazydentalprices.com/Fuji-II-LC-Capsules-425003
+INFO app.search: SKU 3333468 — scraping frontierdental.com (https://frontierdental.com/us/en/product/fuji-ii-lc-glass-ionomer-restorative-light-cure-capsules-re) …
+INFO app.search: SKU 3333466 — scraping crazydentalprices.com (https://www.crazydentalprices.com/Fuji-II-LC-Capsules-425007_2?leadsource=Jolt_CDP) …
+INFO app.search: SKU 3333466 — scrape SUCCESS (markdown, stored 2718 of 28132 chars) — https://www.crazydentalprices.com/Fuji-II-LC-Capsules-425007
+INFO app.search: SKU 3333468 — scrape SUCCESS (markdown, stored 10000 of 27685 chars) — https://frontierdental.com/us/en/product/fuji-ii-lc-glass-io
+INFO app.search: SKU 3333466 — scraping frontierdental.com (https://www.frontierdental.com/us/en/product/fuji-ii-lc-glass-ionomer-restorative-light-cure-capsule) …
+INFO app.search: SKU 3333468 — FREE FETCH (0 credits) — structured $312.41 from https://carolinadental.com/products/fuji-ii-lc-capsules-a3-4
+INFO app.search: SKU 3333468 — FREE FETCH (0 credits) — structured $272.95 from https://thedentalmarket.net/featured-items/gc-fuji-ii-lc-a3-
+INFO app.search: SKU 3333468 — scraping scottsdental.com (https://www.scottsdental.com/fuji-ii-lc-capsules.html) …
+INFO app.search: SKU 3333466 — scrape SUCCESS (markdown, stored 10000 of 56487 chars) — https://www.frontierdental.com/us/en/product/fuji-ii-lc-glas
+WARNING app.search: SKU 3333468 — scrape: login wall (price gated — 'login to see price') at https://www.scottsdental.com/fuji-ii-lc-capsules.html
+INFO app.ai: SKU 3333468 — 8 scraped page(s): 8 cache hit(s), 0 to extract
+INFO app.matcher: SKU 3333468 — crazydentalprices.com variant backstop: shade mismatch (ordered A3.5, page A4)
+INFO app.matcher: SKU 3333468 — crazydentalprices.com variant backstop: shade mismatch (ordered A3.5, page A3)
+INFO app.matcher: SKU 3333468 — carolinadental.com variant backstop: shade mismatch (ordered A3.5, page A3)
+INFO app.matcher: SKU 3333468 — supplyclinic.com MPN-confirmed (425004 in listing) → price_match-eligible
+INFO app.search: SKU 3120212 — market sweep starting (3 queries: Genie VPS Rapid Set 50mL XLight Body 2/Pk | VPS impression material rapid set 50mL xlight body 2 pack | Sultan Healthcare 0077600FG VPS Rapid Set)
+INFO pipeline: Stage 1 done — SKU 3333468: 9 candidate(s), best_exact=none
+INFO app.search: SKU 3120212 — seeded 3 known-good URL(s) from seed_urls.txt
+INFO app.search: SKU 3120212 — discovery CACHE HIT: 32 known URL(s), skipping search (scrapes still run fresh)
+INFO app.search: SKU 3120212 — scraping supplyclinic.com (https://www.supplyclinic.com/items/genie-vps-standard-set-extra-light-body-50ml-2-pack-sultan-health) …
+INFO app.search: SKU 3333466 — FREE FETCH (0 credits) — structured $335.07 from https://www.tdsc.com/All-Categories/Dental-Supplies/Cosmetic
+INFO app.search: SKU 3333466 — scraping purelifedental.com (https://www.purelifedental.com/gc-fuji-ii-lc-glass-ionomer-restorative.html) …
+INFO app.search: AGG_DEBUG wrote supplyclinic.com_www-supplyclinic-com-items-genie-vps-standard-set-extra-ligh_54830aada8.{json,section.md,full.md} (returned $36.69)
+INFO app.search: SKU 3120212 — aggregator price LOCKED $36.69 (2 sellers, badge_match=False) — https://www.supplyclinic.com/items/genie-vps-standard-set-ex
+INFO app.search: SKU 3120212 — scrape SUCCESS (markdown, stored 6618 of 6618 chars) — https://www.supplyclinic.com/items/genie-vps-standard-set-ex
+INFO app.search: SKU 3120212 — scraping supplyclinic.com (https://www.supplyclinic.com/items/genie-vps-rapid-set-light-body-bulk-kit-50ml-60-box-sultan-health) …
+INFO app.search: SKU 3333466 — scrape SUCCESS (markdown, stored 10000 of 12267 chars) — https://www.purelifedental.com/gc-fuji-ii-lc-glass-ionomer-r
+INFO app.search: SKU 3333466 — FREE FETCH (0 credits) — structured $344.84 from https://ddsdentalsupplies.com/gc-america-fuji-ii-lc-refill-c
+INFO app.search: SKU 3333466 — scrape CACHE HIT (2350 chars, 0 credits) — https://carolinadental.com/products/fuji-ii-lc-capsules-a3-4
+INFO app.search: AGG_DEBUG wrote supplyclinic.com_www-supplyclinic-com-items-genie-vps-rapid-set-light-body-bu_e384b4e1f2.{json,section.md,full.md} (returned $702.27)
+INFO app.search: SKU 3120212 — aggregator price LOCKED $702.27 (5 sellers, badge_match=False) — https://www.supplyclinic.com/items/genie-vps-rapid-set-light
+INFO app.search: SKU 3120212 — scrape SUCCESS (markdown, stored 6082 of 6082 chars) — https://www.supplyclinic.com/items/genie-vps-rapid-set-light
+INFO app.search: SKU 3120212 — scrape CACHE HIT (6090 chars, 0 credits) — https://supplydoc.com/products/genie-vps-50-ml
+INFO app.search: SKU 3120212 — scrape CACHE HIT (3090 chars, 0 credits) — https://www.crazydentalprices.com/Genie-VPS-77610
+INFO app.search: SKU 3120212 — scrape CACHE HIT (10000 chars, 0 credits) — https://www.pstshop.com/genie-rapid-set-x-light-body-vps-imp
+INFO app.search: SKU 3120212 — scrape CACHE HIT (10000 chars, 0 credits) — https://ddsdentalsupplies.com/sultan-healthcare-genie-rapid-
+INFO app.search: SKU 3120212 — scrape CACHE HIT (10000 chars, 0 credits) — https://ddsdentalsupplies.com/sultan-genie-vps/
+INFO app.search: SKU 3120212 — scrape CACHE HIT (10000 chars, 0 credits) — https://www.practicon.com/genie-vps-heavy-body-impression-ma
+INFO app.search: SKU 3120212 — scrape CACHE HIT (10000 chars, 0 credits) — https://optimusdentalsupply.com/impression-products/sultan-n
+INFO app.search: SKU 3120212 — scrape CACHE HIT (4242 chars, 0 credits) — https://thedentalmarket.net/dental-supplies/genie-2-x-50ml-c
+INFO app.search: SKU 3333466 — FREE FETCH (0 credits) — structured $249.95 from https://thedentalmarket.net/featured-items/gc-fuji-ii-lc-a3-
+INFO app.search: SKU 3333466 — scraping scottsdental.com (https://www.scottsdental.com/fuji-ii-lc-capsules.html) …
+INFO app.search: SKU 3120212 — scraping pattersondental.com (https://www.pattersondental.com/en-CA/Supplies/ItemDetail/076660062) …
+WARNING app.search: SKU 3333466 — scrape: login wall (price gated — 'login to see price') at https://www.scottsdental.com/fuji-ii-lc-capsules.html
+INFO app.ai: SKU 3333466 — 11 scraped page(s): 11 cache hit(s), 0 to extract
+INFO app.matcher: SKU 3333466 — crazydentalprices.com variant backstop: shade mismatch (ordered A3, page A4)
+INFO app.matcher: SKU 3333466 — crazydentalprices.com variant backstop: shade mismatch (ordered A3, page B3)
+INFO app.matcher: SKU 3333466 — supplyclinic.com MPN-confirmed (425003 in listing) → price_match-eligible
+INFO app.matcher: SKU 3333466 — frontierdental.com price $173.48 flagged UNVERIFIED (scraped page body has no price)
+INFO app.search: SKU 7011085 — market sweep starting (3 queries: Diamond FG Coarse 841G-012 5/Pk | dental diamond FG coarse bur 841G-012 5 pack | 841G-012-FG Diamond FG Coarse)
+INFO app.search: SKU 7011085 — seeded 3 known-good URL(s) from seed_urls.txt
+INFO app.search: SKU 7011085 — discovery CACHE HIT: 23 known URL(s), skipping search (scrapes still run fresh)
+INFO pipeline: Stage 1 done — SKU 3333466: 12 candidate(s), best_exact=$312.41 @ carolinadental.com
+INFO app.search: SKU 7011085 — scrape CACHE HIT (10000 chars, 0 credits) — https://www.allfordentist.com/diamond-burs-fg-841-012-coarse
+INFO app.search: SKU 7011085 — scrape CACHE HIT (2094 chars, 0 credits) — https://chasedentalsupply.com/meisinger-diamond-cylinder-rou
+INFO app.search: SKU 7011085 — scrape CACHE HIT (6748 chars, 0 credits) — https://www.dentalcity.com/product/22071/meisinger-diamond-b
+INFO app.search: SKU 7011085 — scrape CACHE HIT (2386 chars, 0 credits) — https://www.crazydentalprices.com/Meisinger-Diamonds-800-841
+INFO app.search: SKU 7011085 — scrape CACHE HIT (2395 chars, 0 credits) — https://www.crazydentalprices.com/Meisinger-Diamonds-800-841
+WARNING app.search: SKU 7011085 — scrape: login wall (price gated, cached) at https://www.dhpsupply.com/products/415/Burs/&pg=580
+WARNING app.search: SKU 7011085 — scrape: login wall (price gated, cached) at https://www.dhpsupply.com/products/415/Burs/&pg=563
+INFO app.search: SKU 7011085 — scrape CACHE HIT (10000 chars, 0 credits) — https://surgimac.com/products/mark3-blue-streak-fg-862-010-c
+INFO app.search: SKU 7011085 — scrape CACHE HIT (10000 chars, 0 credits) — https://surgimac.com/products/mark3-blue-streak-fg-379-023-c
+INFO app.search: SKU 7011085 — scrape CACHE HIT (6153 chars, 0 credits) — https://www.skydentalsupply.com/nti-diamond-burs%E2%80%93fg-
+INFO app.search: SKU 7011085 — scrape CACHE HIT (10000 chars, 0 credits) — https://optimusdentalsupply.com/burs/kerr-nti-diamond-burs-c
+INFO app.search: SKU 7011085 — scrape CACHE HIT (10000 chars, 0 credits) — https://www.primedentalsupply.com/fg835c-diamond-bur-coarse-
+INFO app.search: SKU 7011085 — scrape CACHE HIT (4663 chars, 0 credits) — https://www.kerrdental.com/en-us/rotary
+INFO app.search: SKU 7011085 — scrape CACHE HIT (3528 chars, 0 credits) — https://www.mrbur.com/products/cylinder-coarse-diamond-bur-f
+INFO app.ai: SKU 7011085 — 12 scraped page(s): 8 cache hit(s), 4 to extract
+WARNING app.search: SKU 3120212 — scrape: login wall (no public price shown) at https://www.pattersondental.com/en-CA/Supplies/ItemDetail/076660062
+INFO app.search: SKU 3120212 — scrape CACHE HIT (5562 chars, 0 credits) — https://palmettodentalsupply.com/products/sultan-genie-vps-s
+INFO app.search: SKU 3120212 — scrape CACHE HIT (10000 chars, 0 credits) — https://medentrx.com/sultan-genie-vps-impression-materials-b
+INFO app.search: SKU 3120212 — scraping sinclairdental.com (https://www.sinclairdental.com/en/Supplies/Impression-Materials/Vinyl-Polysiloxanes/Genie-Xtra-Light) …
+INFO httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/openai/chat/completions "HTTP/1.1 200 OK"
+WARNING app.search: SKU 3120212 — scrape: login wall (no public price shown) at https://www.sinclairdental.com/en/Supplies/Impression-Materials/Vinyl-Polysiloxa
+INFO app.ai: SKU 3120212 — 12 scraped page(s): 10 cache hit(s), 2 to extract
+INFO httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/openai/chat/completions "HTTP/1.1 200 OK"
+INFO app.matcher: SKU 7011085 — flagged mrbur.com $21.59 as low outlier vs median $53.95
+INFO httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/openai/chat/completions "HTTP/1.1 200 OK"
+INFO app.matcher: SKU 3120212 — supplyclinic.com locked-price token-confirmed → price_match-eligible
+INFO pipeline: Stage 1 done — SKU 3120212: 14 candidate(s), best_exact=none
+INFO pipeline: Stage 1 done — SKU 7011085: 14 candidate(s), best_exact=$43.88 @ chasedentalsupply.com
+INFO pipeline: Writing reports for ref=OR202605280844126040
+INFO app.reports: Price match report: 22 item(s), 53 option row(s) → OR202605280844126040_price_match.xlsx
+INFO app.reports: Alternate purchases report: 167 row(s) → OR202605280844126040_alternate_purchases.xlsx
+INFO app.reports: Evidence file written → OR202605280844126040_evidence.xlsx
+INFO app.search: Discovery cache: persisted 6 SKU(s) for future runs
+INFO firecrawl.credits: Firecrawl run summary ref=OR202605280844126040: 103 scrape(s), 0 skipped, 78 credits billed
+INFO pipeline: === Pipeline complete: ref=OR202605280844126040 items=25 firecrawl_scrapes=103 skipped=0 credits=78 exhausted=False ===
+{'reference': 'OR202605280844126040', 'items': 25, 'total': 10610.55, 'computed_total': 10610.55, 'price_match_report': '/Users/Malaika-mac/Downloads/dental_price_intel/output/OR202605280844126040_price_match.xlsx', 'alternate_purchase_list': '/Users/Malaika-mac/Downloads/dental_price_intel/output/OR202605280844126040_alternate_purchases.xlsx', 'evidence_file': '/Users/Malaika-mac/Downloads/dental_price_intel/output/OR202605280844126040_evidence.xlsx'}

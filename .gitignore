@@ -13,3 +13,6 @@ __pycache__/
 .DS_Store
 
 .env
+
+# AGG_DEBUG artifacts (full scraped page markdown — large, not for VCS)
+output/agg_debug/

@@ -19,6 +19,7 @@ class OrderLineItem(BaseModel):
     pack_unit: Optional[str] = None          # e.g. "Pk"
     variant: Optional[str] = None            # shade/color/size e.g. "A2", "Green 6.5mm"
     mpn: Optional[str] = None                # manufacturer part number
+    mpn_verified: bool = False               # MPN confirmed (internal-consistency + page-consensus) → safe to REJECT conflicting listings; unverified = discovery hint only
     search_query: Optional[str] = None
     generic_query: Optional[str] = None   # brand-stripped query for house-brand items
     mpn_query: Optional[str] = None       # MPN-based precision query
@@ -47,12 +48,25 @@ class PriceCandidate(BaseModel):
     scraped_product_name: Optional[str] = None
     scraped_variant: Optional[str] = None
     scraped_markdown: Optional[str] = None  # raw page markdown for batched Groq extraction
+    structured_price: Optional[float] = None  # price from JSON-LD/og-meta (rescues nav-bloated store pages)
+    structured_name: Optional[str] = None     # product name from JSON-LD/og-meta when markdown had none
+    price_structured: bool = False        # price set from a SINGLE-offer JSON-LD/og price (deterministic + accurate); AI validates but must not overwrite it
+    out_of_stock: bool = False            # listing is out of stock / no longer available — not a buyable price, must never headline as the recommended best
     original_price: Optional[float] = None   # pre-discount/struck-through price if page was on sale
     variant_unverified: bool = False     # page didn't confirm the ordered variant
+    variant_conflict: bool = False       # page CONFLICTS with ordered variant (wrong color/shade/size/flavor) — hard-exclude from price_match, route to alternate
+    pack_conflict: bool = False          # page sells a DIFFERENT pack size than ordered (10-count vs a 300/Bx order) — price not comparable, hard-exclude from price_match, route to alternate
+    mpn_confirmed: bool = False          # the order's MPN appears in this candidate's URL/name — definitive same-product identity; price_match-eligible regardless of the LLM's criteria
     price_unreliable: bool = False        # AI price wildly diverges from listing — verify
     price_locked: bool = False            # price set deterministically (aggregator table parser); AI must not overwrite it
     is_generic_equivalent: bool = False  # same product type, different (or no) brand
     in_stock: Optional[bool] = None
+    # Lowest-priced sellers EXCLUDED from the lock because they are backordered /
+    # out-of-stock (net32 flips a seller between "Backordered" and "Long Handling
+    # Time" by scrape location). Captured so the report can surface them as a
+    # clearly labelled secondary row instead of silently dropping the price.
+    # Each entry: {"price": float, "status": str, "vendor": str}.
+    backorder_options: List[dict] = Field(default_factory=list)
     # Verdict — assigned by real validation, never defaulted
     match_type: str = "unverified"           # exact | approximate | rejected | unverified
     confidence: int = 0

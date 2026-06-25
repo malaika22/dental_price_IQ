@@ -62,6 +62,20 @@ CREATE TABLE IF NOT EXISTS extract_cache (
     payload TEXT,
     extracted_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+-- Learned MPN store: per Henry Schein SKU, the manufacturer part number.
+-- Seeded from config/mpn_table.txt (source='manual'), then dynamically filled
+-- and validated from the part numbers the real supplier pages declare
+-- (source='page-consensus'). status: 'seed' (unverified) | 'verified' |
+-- 'conflict' (seed disagrees with the pages → not trusted for rejection).
+CREATE TABLE IF NOT EXISTS mpn_store (
+    schein_sku TEXT PRIMARY KEY,
+    mpn TEXT,
+    manufacturer TEXT,
+    source TEXT,
+    status TEXT,
+    page_mpn TEXT,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 -- Stage 3 (order generation) — schema reserved, unused in Stage 1+2
 CREATE TABLE IF NOT EXISTS order_history (
     id INTEGER PRIMARY KEY,
@@ -291,6 +305,51 @@ def save_extract(key: str, payload: dict) -> None:
                 c.execute(
                     "INSERT OR REPLACE INTO extract_cache(key, payload, extracted_at)"
                     " VALUES (?,?,datetime('now'))", (key, json.dumps(payload)))
+                c.commit()
+            finally:
+                c.close()
+    except Exception:
+        pass
+
+
+# --------------------------------------------------------- MPN store --------
+
+def get_mpn_store(conn) -> dict:
+    """Return {schein_sku: {mpn, manufacturer, source, status, page_mpn}}."""
+    out = {}
+    try:
+        for sku, mpn, mfr, src, st, pm in conn.execute(
+                "SELECT schein_sku, mpn, manufacturer, source, status, page_mpn FROM mpn_store"):
+            out[sku] = {"mpn": mpn, "manufacturer": mfr, "source": src,
+                        "status": st, "page_mpn": pm}
+    except Exception:
+        pass
+    return out
+
+
+def upsert_mpn(conn, schein_sku, mpn, manufacturer=None, source="manual",
+               status="seed", page_mpn=None) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO mpn_store(schein_sku, mpn, manufacturer, source, "
+        "status, page_mpn, updated_at) VALUES (?,?,?,?,?,?,datetime('now'))",
+        (schein_sku, mpn, manufacturer, source, status, page_mpn))
+    conn.commit()
+
+
+def upsert_mpn_now(schein_sku, mpn, manufacturer=None, source="page-consensus",
+                   status="verified", page_mpn=None) -> None:
+    """Thread-safe immediate upsert (own connection) — called from worker threads
+    as page-consensus MPNs are learned during the sweep."""
+    if not schein_sku or not mpn:
+        return
+    try:
+        with _scrape_lock:
+            c = sqlite3.connect(_SCRAPE_DB_PATH["p"], timeout=10)
+            try:
+                c.execute(
+                    "INSERT OR REPLACE INTO mpn_store(schein_sku, mpn, manufacturer, "
+                    "source, status, page_mpn, updated_at) VALUES (?,?,?,?,?,?,datetime('now'))",
+                    (schein_sku, mpn, manufacturer, source, status, page_mpn))
                 c.commit()
             finally:
                 c.close()

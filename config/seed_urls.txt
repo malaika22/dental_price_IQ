@@ -1,0 +1,116 @@
+# Seed URLs (Option 2): 'SKU | url' — scraped directly every run, bypassing
+# discovery. Generated from Dr Paul (1).xlsx; one best-matching manual group
+# per order item (require strong overlap so bur groups don't cross-seed).
+
+# 8889527  ParaPost Fiber Lux Red PF171-5.0 5/Pk  <=  ParaPost Fiber Lux Red PF171-5.0 5/Pk (ov 7)
+8889527 | https://ansondental.com/products/coltene-parapost-fiber-lux?currency=USD&country=US&variant=40281234505862&utm_source=google&utm_medium=cpc&utm_campaign=Google%20Shopping&stkn=84caddec0854&srsltid=AfmBOopQ3a222SuIbdv_inNlH3ElqBH2TkK3PdAvSLtKFprPtUpj56A9qWU
+8889527 | https://usdentaldepot.com/parapost-fiber-lux-posts-size-5-coltene-whaladent-pf1715
+8889527 | https://www.tdsc.com/All-Categories/Dental-Supplies/Endodontics/Endodontic-Files,-Reamers-%26-Accessories/Posts/ParaPost-Fiber-Lux-Post-Refill/p/202039-4?ab_version=B&srsltid=AfmBOop94voe_v34xwl4tBd_AQkVifQkom1cVm6d_3FvtqzspZz05sX0H58
+# 2013820  Mity K-Files 25mm #10 6/Pk  <=  Mity K-Files 25mm #10 6/Pk (ov 6)
+2013820 | https://www.supplyclinic.com/items/mity-k-files-nt-25mm-10-6-pk-js-2k5010
+2013820 | https://thedentalmarket.net/endodontic/nickel-titanium-reamer-files-25mm/?sku=DI-NT501-211&srsltid=AfmBOopgMt9HQmGaOFg4aFwUAlbn8gsQrTvwsavRNNXXD1SX7V6USk6jDTs
+2013820 | https://www.tdsc.com/All-Categories/Dental-Supplies/Endodontics/Endodontic-Files,-Reamers-%26-Accessories/Hand-Files/Mity-NiTi-K-Files/p/200529-15?ab_version=A&srsltid=AfmBOop-MxrTw7ta8ZCFOkDhbivZUS2SDExD00tOzzs8t6CeixhwK-2SSwA
+# 1392761  S3+ Face Masks L3 Black 50/Bx  <=  S3+ Face Masks L3 Black 50/Bx (ov 6)
+1392761 | https://www.supplyclinic.com/items/cranberry-s3-face-mask-blue-level-3-50-bx-pro2-solutions-s3160b
+1392761 | https://frontierdental.com/us/en/product/s3-plus-mask-black-50box-astm-level-3-s3160k-165924?bp=ZnJvbnRpZXJkZW50YWw=&ctr=VVM=&srsltid=AfmBOorco6L22Y3PGKhB4VSyUYm5WiLhpETnuBijlTBmmKIsaECClN89UL0
+# 2223852  Mixing Tips Reﬁll Teal 50mL 48/Bx  <=  Mixing Tips Reﬁll Teal 50mL 48/Bx (ov 7)
+2223852 | https://www.pstshop.com/large-green-mixing-tips-48-bag/
+2223852 | https://dentaldash.shop/products/hp-mixing-tips-6-5-mm-teal-48-pk
+# 2222660  Dynamic Mixing Tips Yellow w/LuerLock 40/Pk  <=  Dynamic Mixing Tips Yellow w/LuerLock 40/Pk (ov 7)
+2222660 | https://www.supplyclinic.com/items/dynamic-mixing-tip-yellow-40-pack-coltene-whaledent-6162
+2222660 | https://topqualitygloves.com/products/top-quality-dynamic-mixing-tips-yellow?variant=39836793995335&ab_version=A&srsltid=AfmBOooItukAgzlAUwh83bcWGqMPfq2D7gliSZn62E-lAqzsfQPir62MvGw&com_cvv=8fb3d522dc163aeadb66e08cd7450cbbdddc64c6cf2e8891f6d48747c6d56d2c
+2222660 | https://ansondental.com/products/premium-dental-dynamic-mixing-tips-yellow-including-ring?currency=USD&country=US&variant=30916149313670&utm_source=google&utm_medium=cpc&utm_campaign=Google+Shopping&stkn=84caddec0854&srsltid=AfmBOoqIALXNm6u2y_mWsmaABvn4tSKJ5IVtTm207KW-3gMdTsGFZe4HYps&com_cvv=8fb3d522dc163aeadb66e08cd7450cbbdddc64c6cf2e8891f6d48747c6d56d2c
+# 3120199  Genie VPS Magic Mix Stand Bulk Heavy Body 4/Pk  <=  Genie VPS Magic Mix Stand Bulk Heavy Body 4/ (ov 9)
+3120199 | https://ddsdentalsupplies.com/sultan-healthcare-genie-5-1-impression-material-magic-mix-4x380ml-cartridge-heavy-body-standard-set-berry-bulk-pkg/
+3120199 | https://www.net32.com/ec/genie-magic-mix-vps-impression-material-heavy-d-172999
+3120199 | https://alpinedentalshop.com/products/genie-vps-heavy-body-4-x-380ml-cartridge?variant=51608080941370&country=US&currency=USD&utm_medium=product_sync&utm_source=google&utm_content=sag_organic&utm_campaign=sag_organic
+3120199 | https://www.tdsc.com/All-Categories/Dental-Supplies/Impression-Materials-%26-Accessories/Impression-Materials/Vinyl-Polysiloxane-%28VPS%29/Genie-VPS-Magic-Mix-Bulk-Kit/p/231255-4
+# 3122330  Genie Putty Rapid Set Berry 2x445 Gr  <=  Genie Putty Rapid Set Berry 2x445 Gr (ov 7)
+3122330 | https://thedentalmarket.net/dental-supplies/genie-putty-rapid-set/
+3122330 | https://ddsdentalsupplies.com/sultan-healthcare-genie-impression-material-vinyl-polysiloxane-putty-hard-berry-flavor-standard-set/
+3122330 | https://optimusdentalsupply.com/sultan-genie-vps-putty-hard-rapid-set-berry-flavor-2x300ml-jars/
+# 3865728  Speedclean For Autoclave 16oz/Bt  <=  Speedclean For Autoclave 16oz/Bt (ov 4)
+3865728 | https://www.kingpintattoosupply.com/products/speedclean-autoclave-cleaner-16-oz
+3865728 | https://www.supplyclinic.com/items/speed-clean-autoclave-cleaner-liquid-16oz-bt-midmark-002-0396-00?kw=&cpn=23795785166&utm_source=google&utm_medium=cpc&utm_campaign=23795785166&utm_content=&utm_term=&hsa_acc=9475265481&hsa_cam=23795785166&hsa_grp=&hsa_ad=&hsa_src=x&hsa_tgt=&hsa_kw=&hsa_mt=&hsa_net=adwords&hsa_ver=3&gad_source=4&gad_campaignid=23790397818&gbraid=0AAAAADid5nVppbmpvv4QeEaqeliAecscO&gclid=CjwKCAjw0dPRBhAPEiwAE5vTTlj6je_YdLFAv9jZ4LPHaTeCTAXILEWfc4cWLa4Ysz9txWLtnv_pjRoCJnoQAvD_BwE
+3865728 | https://www.lexiconsupply.com/products/speed-clean-autoclave-cleaner?variant=43064821448740&country=US&currency=USD&utm_medium=product_sync&utm_source=google&utm_content=sag_organic&utm_campaign=sag_organic&srsltid=AfmBOoqdlupMBh-4HXw4diKEtbqqxbyv96XNTaANaj-N-DJHCqLiDvFGoFA
+3865728 | https://dentalcity.com/product/9003/midmark-speedclean-autoclave-cleaner-16oz
+3865728 | https://www.pstshop.com/speed-clean-autoclave-cleaner-16-oz-bottle-002-0396-05/
+# 7013176  Meisinger Polisher HP 9736H-150 2/Pk  <=  Meisinger Polisher HP 9736H-150 2/Pk (ov 6)
+7013176 | https://ddsdentalsupplies.com/9736h-150-hp-trq-polisher-diam/
+7013176 | https://www.amtouch.com/shop-by-category/finishing-polishing/meisinger-mounted-polisher-extra-coarse-black-orange-refill-2-pk/
+7013176 | https://www.avtecdental.com/products/trq-abrasive-turquoise-wheel-diamond-porcelain-for-ceramics-zirconia-sprue-removal-15mm-o-coarse-hp-9736h-150-hp
+# 7120116  Gum Technique Deep Clean TB Soft Compact 12/Bx  <=  Gum Technique Deep Clean TB Soft Compact 12/ (ov 8)
+7120116 | https://www.crazydentalprices.com/Technique-Deep-Clean-525PG_2
+7120116 | https://dentalwholesaledirect.com/preventives/gum-technique-deep-clean-manual-toothbrush-adult-compact-soft-12-bx/
+7120116 | https://www.net32.com/ec/gum-technique-deep-clean-toothbrush-compact-head-d-133049
+# 8969286  Premium Cotton Rolls #2 Non-Sterile 2000/Bx  <=  Premium Cotton Rolls #2 Non-Sterile 2000/Bx (ov 7)
+8969286 | https://www.tdsc.com/All-Categories/Dental-Supplies/Disposable-Products/Cotton-Rolls-%26-Alternatives/Premium-Non-Sterile-Cotton-Rolls/p/190419-1?ab_version=A&srsltid=AfmBOoqZhI6I4zrBDKyLWkQYWzPZwnWXiCBbq5WeLxzoHkYBrsv67i_OZA4
+8969286 | https://www.fireflysupply.com/products/henry-schein-size-2-medium-premium-cotton-rolls-1-5-length-0-375-diameter-2000-box-non-sterile-white-latex-free-ideal-for-dental-and-medical-use?variant=49006093893884&srsltid=AfmBOop0rBjNNlulOm_qzurv_KiWl7eas7lpaaBQOVq3bjqbHrLi6Xt0y00
+8969286 | https://www.graylinemedical.com/products/henry-schein-cotton-roll-premium-hsi-medium-size-2-ns-0375-in-15-in-2000-bx-12-bx-ca8969286?variant=19330869755961&srsltid=AfmBOopbg06bzm6UDIAuUcPqoziBk_mBSsBMxff7xp5q3rexMcseFCA7TeI
+# 7772551  3M Clinpro Clear Fluoride Trtm No Flavor 100/Pk  <=  3M Clinpro Clear Fluoride Trtm No Flavor 100 (ov 8)
+7772551 | https://dentalwholesaledirect.com/preventives/3m-clinpro-clear-fluoride-treatment-7310ff-flavorless-0-5-ml-unitdose-100-pac/
+# 1024081  Tray Cover 8.5"x12.25" Aqua 1000/Ca  <=  Tray Cover 8.5"x12.25" Aqua 1000/Ca (ov 9)
+1024081 | https://www.supplyclinic.com/items/tray-covers-ritter-b-aqua-8-5-x-12-25-1000-crosstex-fbaq
+1024081 | https://www.supplyclinic.com/items/tray-covers-ritter-b-8-5-x-12-25-blue-1000-pk-hsb-house-brand-dentistry-101130
+1024081 | https://www.crazydentalprices.com/Paper-Tray-Covers-PAP-B2
+# 1126830  Criterion N300 Glove Ice Blue Nitrile S 300/Bx  <=  Criterion N300 Glove Ice Blue Nitrile S 300/ (ov 8)
+1126830 | https://afteractionmedical.com/shop/criterion-n300-ultra-nitrile-exam-gloves/
+1126830 | https://www.suprememed.com/criterion-n300-nitrile-exam-gloves-standard-ice-blue-non-sterile/?attribute_pa_unit-of-measure-conf=bx300&attribute_pa_size-conf=small
+# 1126831  Criterion N300 Glove Ice Blue Nitrile M 300/Bx  <=  Criterion N300 Glove Ice Blue Nitrile M 300/ (ov 8)
+1126831 | https://www.tdsc.com/All-Categories/Dental-Supplies/Infection-Control/Personal-Protective-Equipment-%28PPE%29/Gloves/Criterion-Nitrile-Exam-N300-Gloves/p/242623-1
+1126831 | https://www.mfidistribution.com/product-page/criterion-n300-nitrile-exam-gloves-medium-standard-ice-blue-non-sterile-10-bx-c
+1126831 | https://afteractionmedical.com/shop/criterion-n300-ultra-nitrile-exam-gloves/
+# 7013349  Zirconia Pre-Polish Wheel Med Blue/Orange Ea  <=  Zirconia Pre-Polish Wheel Medium Blue/Orange (ov 6)
+7013349 | https://www.supplyclinic.com/items/zirconia-polisher-blue-orange-smoothing-wheel-11-0mm-hp-2-pk-meisinger-usa-dca05-110-hp-bl-o
+7013349 | https://www.crazydentalprices.com/Diamond-Polisher-Wheel-Medium-Blue-Orange-HP-2-Pk
+7013349 | https://www.supplyclinic.com/items/mei-zirconia-pre-polisher-handpiece-medium-wheel-dca06-blue-orange-refill-ea-meisinger-usa-dca06-170-hp-bl-o
+# 7013185  Meisinger Polisher HP 9742M-040 2/Pk  <=  Meisinger Polisher HP 9742M-040 2/Pk (ov 6)
+7013185 | https://www.net32.com/ec/meisinger-hp-dca04040-prepolish-point-shaped-diamond-d-189736?vid=130&frt=37&srsltid=AfmBOopIfk1HgejQMxlGMlIB4A_QW2vznfX5OynOpJ7k2BIgbp8WXK3Z_eY
+7013185 | https://www.avtecdental.com/products/polisher-diamond-impregnated-for-porcelain-blue-orange-point-4mm-o-polishing-medium-hp-9742m-040-hp-bl-o-1?currency=USD&country=US&variant=47172801102049&stkn=3211f317f567&srsltid=AfmBOoqt2jWY7n3f1QCEvzCPGtfOmGk0aPPxGkosDcLY804rN3f2KBTfQ_E
+7013185 | https://www.dentalcity.com/product/21767/meisinger-ceramic-polishers?78-9743M040RA=&srsltid=AfmBOorK3qycYfdHKuOIsRl-Ab4r6kUwjLtNE07q3dEZWX4Y-Dq_e6iaUsY
+# 3250498  Oral-B Glide Floss Deep Clean 4 meter Mint 72/Bx  <=  Oral-B Glide Floss Deep Clean 4 meter Mint 7 (ov 10)
+3250498 | https://www.crazydentalprices.com/Pro-Health-Glide-Floss-Procter-Gamble-84837276
+3250498 | https://thedentalmarket.net/preventives/oral-b-deep-clean-floss-cool-mint-4-m-trial-size-72-box/
+3250498 | https://www.orthazone.com/209-fdt-glide-floss-pro-heah-original-4m-72cs-6265
+# 9872474  Sharps Cont Counter Balanced 3 Gal RD Ea  <=  Sharps Cont Counter Balanced 3 Gal RD Ea (ov 7)
+9872474 | https://www.vitalitymedical.com/3-gallon-bd-patient-room-sharps-container-counter-balanced-lid-red-305436.html
+9872474 | https://ddsdentalsupplies.com/crosstex-305436/
+9872474 | https://www.usamedicalsurgical.com/bd-patient-room-sharps-containers/?sku=BD-305426-EACH&srsltid=AfmBOooXdUth1C2KlAgexZ2Sd1e00IBBEXXGWeYeJFi_4VW_vY1TvoCeggY
+# 3120114  ReSURGE Inst Cleaning Solution 33oz/Bt  <=  ReSURGE Inst Cleaning Solution 33oz/Bt (ov 6)
+3120114 | https://thedentalmarket.net/featured-items/resurge-instrument-cleaning-solution-1l-33-8-oz-makes-67-gallons-unique/
+3120114 | https://ddsdentalsupplies.com/sultan-healthcare-resurge-instrument-cleaning-solution/
+3120114 | https://www.safcodental.com/product/resurge-trade
+# 1403081  CaviWipes 2.0 Wipes 6"x6.75" 160/Cn  <=  CaviWipes 2.0 Wipes 6"x6.75" 160/Cn (ov 9)
+1403081 | https://www.net32.com/ec/caviwipes-20-disinfectant-wipes-6x675-160-enhanced-d-170013
+1403081 | https://www.crazydentalprices.com/CaviWipes-2.0-14-1100_2
+1403081 | https://honestmed.com/shop/Housekeeping-&-Cleaning-Supplies/Cleaners,-Disinfectants,-&-Deodorizers/Disinfectant-Wipes/M411860
+# 3333468  Fuji II LC Capsules A3.5 48/Bx  <=  Fuji II LC Capsules A3.5 48/Bx (ov 7)
+3333468 | https://www.supplyclinic.com/items/fuji-ii-lc-capsules-a3-5-48-bx-gc-america-425004
+3333468 | https://www.net32.com/ec/gc-fuji-ii-lc-a35-capsules-48-d-130428
+3333468 | https://www.crazydentalprices.com/Fuji-II-LC-Capsules-425004_2
+3333468 | https://frontierdental.com/us/en/product/fuji-ii-lc-glass-ionomer-restorative-light-cure-capsules-refill-0-1-ml-a3-5-48-pk-36413?bp=ZnJvbnRpZXJkZW50YWw=&ctr=VVM=&srsltid=AfmBOoquIIsrnFlxD6LrhEiovdH__ZuDO37ZhCJJ2ZL_e1N1ztbJGI1wbiU
+3333468 | https://carolinadental.com/products/fuji-ii-lc-capsules-a3-48-bx
+3333468 | https://thedentalmarket.net/featured-items/gc-fuji-ii-lc-a3-5-capsules-48-pk-light-cure-resin-reinforced-glass-ionomer/
+# 3333466  Fuji II LC Capsules A3 48/Bx  <=  Fuji II LC Capsules A3 48/Bx (ov 6)
+3333466 | https://ddsdentalsupplies.com/gc-america-fuji-ii-lc-refill-capsule-package-shade-a3/
+3333466 | https://www.supplyclinic.com/items/fuji-ii-lc-capsules-a3-48-bx-gc-america-425003?kw=&cpn=23795785166&utm_source=google&utm_medium=cpc&utm_campaign=23795785166&utm_content=&utm_term=&hsa_acc=9475265481&hsa_cam=23795785166&hsa_grp=&hsa_ad=&hsa_src=x&hsa_tgt=&hsa_kw=&hsa_mt=&hsa_net=adwords&hsa_ver=3&gad_source=4&gad_campaignid=23790397818&gbraid=0AAAAADid5nVppbmpvv4QeEaqeliAecscO&gclid=CjwKCAjw0dPRBhAPEiwAE5vTTgIXg6xN3SWOfvdtjfTaqA8fztYaKxVcwNVNvyc2HAF1QE7YeSlccBoCOzcQAvD_BwE
+3333466 | https://frontierdental.com/us/en/product/fuji-ii-lc-glass-ionomer-restorative-light-cure-capsules-refill-0-1-ml-a3-48-pk-36596?bp=ZnJvbnRpZXJkZW50YWw=&ctr=VVM=&srsltid=AfmBOoqdu6YIOOpr68MOYDMmxngoH9pOpFvZcwbl2haWYBD6uhJdkWPaPJk
+3333466 | https://carolinadental.com/products/fuji-ii-lc-capsules-a3-48-bx
+3333466 | https://thedentalmarket.net/featured-items/gc-fuji-ii-lc-a3-capsules-50-pk-export-package-light-cure-resin-reinforced/
+3333466 | https://www.net32.com/ec/gc-fuji-ii-lc-a3-capsules-50-d-20149
+# 3120212  Genie VPS Rapid Set 50mL XLight Body 2/Pk  <=  Genie VPS Rapid Set 50mL XLight Body 2/Pk (ov 8)
+3120212 | https://supplydoc.com/products/genie-vps-50-ml
+3120212 | https://www.crazydentalprices.com/Genie-VPS-77610
+3120212 | https://www.pstshop.com/genie-rapid-set-x-light-body-vps-impression-material-2-50ml-cartridges-77600/
+# 7011085  Diamond FG Coarse 841G-012 5/Pk  <=  Diamond FG Coarse 841G-012 5/Pk (ov 6)
+7011085 | https://www.allfordentist.com/diamond-burs-fg-841-012-coarse-pk-5-prd-1660.html
+7011085 | https://chasedentalsupply.com/meisinger-diamond-cylinder-round-edge-841g-coarse/
+7011085 | https://www.dentalcity.com/product/22071/meisinger-diamond-burs-round-edge-cylinder?70-842012FG
+# 7772551 Clinpro fluoride TREATMENT 100-pk — chat-provided manual links (not in xlsx)
+7772551 | https://ddsdentalsupplies.com/clinpro-clear-flavorless-fluoride-treatment-0-5-ml-unit-dose-100-pk/
+7772551 | https://curio.dental/products/clinpro-clear-fluoride-0-5ml-100-pk
+7772551 | https://thedentalmarket.net/preventives/3m-clinpro-clear-fluoride-treatment-0-5-ml-unit-dose-100-pack-flavourless/
+# 1126830 Criterion S — genuine reseller (afteractionmedical), chat-provided
+1126830 | https://afteractionmedical.com/shop/criterion-n300-ultra-nitrile-exam-gloves/
+# 1126831 Criterion M — genuine reseller (mfidistribution shows SKU 1126831)
+1126831 | https://www.mfidistribution.com/criterion-n300-nitrile-exam-gloves-medium-standard

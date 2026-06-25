@@ -21,10 +21,19 @@ Tiers: EXACT = same product · CLOSE = compatible specs · POSSIBLE = needs revi
 """
 from __future__ import annotations
 import logging
+import os
 import time
 from pathlib import Path
 from typing import List, Optional
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse
+
+
+def _domain(url) -> str:
+    try:
+        d = urlparse(str(url or "")).netloc.lower()
+        return d[4:] if d.startswith("www.") else d
+    except Exception:
+        return ""
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -239,59 +248,22 @@ def _brand_ok(item, c: PriceCandidate) -> bool:
     return bool((c.criteria or {}).get("brand_match")) or not getattr(item, "brand", None)
 
 
-def _option_pool(r: ItemResult) -> list[PriceCandidate]:
-    """Non-exact candidates eligible as options: approximate first, then
-    verified-but-rejected (variant/brand mismatch), then unverified. Login-
-    gated candidates with a search-listed price are allowed LAST, clearly
-    labeled, only to fill otherwise-empty slots. Sanity rejects never appear.
-    Within the leading rank, near-tied scores (15 pts) compete on price."""
-    pool, seen = [], set()
-    unit = r.item.unit_price
-    for c in r.candidates:
-        if c.price is None or c.price <= 0 or c.url in seen:
-            continue
-        if "sanity" in (c.rejected_reason or "").lower():
-            continue
-        if "page not found" in (c.rejected_reason or "").lower():
-            continue                      # dead/expired listing
-        # price floor/ceiling applies to EVERY option, including gated and
-        # unverified snippet prices (kills $0.30-per-unit style rows)
-        if not (0.05 * unit <= c.price <= 3.0 * unit):
-            continue
-        if _pack_mismatch(r.item, c):
-            continue                      # stays in alternate + evidence only
-        seen.add(c.url)
-        pool.append(c)
-
-    # Lowest price first. Gated (login/membership) candidates always sort
-    # after publicly-priced ones regardless of price.
-    pool.sort(key=lambda c: (_is_gated(c), c.price,
-                             -match_score(c.criteria, c.confidence)))
-    return pool
-
-
-def _why_not_exact(c: PriceCandidate) -> str:
-    if _is_gated(c):
-        return ("GATED — pricing requires login/membership on this site; price shown "
-                "comes from the public search listing. Verify manually before negotiating.")
-    missed = [_CRIT_LABEL[k] for k, v in (c.criteria or {}).items() if v is False]
-    note = _clean(c.notes) or _clean(c.rejected_reason)
-    parts = []
-    if missed:
-        parts.append("Not exact — mismatch on: " + ", ".join(missed))
-    if note:
-        parts.append(note)
-    return " · ".join(parts) or "Not exact — could not confirm all four trust criteria"
-
-
 def _score_label(item, c: PriceCandidate) -> str:
     """Label derives from the criteria themselves, never from a raw
     match_type that contradicts them. Surfaces special tiers:
     GATED (login pricing), GENERIC EQUIVALENT (Q1: house-brand item, no exact
     competitor exists), VARIANT UNVERIFIED (Q2: variant not confirmed on page)."""
     score = match_score(c.criteria, c.confidence)
+    if getattr(c, "out_of_stock", False):
+        return f"OUT OF STOCK ({score}%)"
     if _is_gated(c):
         return f"GATED ({score}%)"
+    # ISSUE 3: a price flagged unreliable (e.g. Groq read a number not on the page,
+    # or it conflicts with the listing) must NEVER be presented as EXACT — that is
+    # exactly the misleading "$26.93 EXACT" headline on a hallucinated price. Label
+    # it UNVERIFIED PRICE so the buyer treats the number as needing confirmation.
+    if getattr(c, "price_unreliable", False):
+        return f"UNVERIFIED PRICE ({score}%)"
     if getattr(c, "is_generic_equivalent", False):
         return f"GENERIC EQUIVALENT ({score}%)"
     if _is_exact_cand(item, c):
@@ -340,12 +312,24 @@ def _pricematch_eligible(item, c: PriceCandidate) -> bool:
     # to the Schein rep as a confirmed four-criteria match.
     if getattr(c, "price_unreliable", False):
         return False
+    # out-of-stock / no-longer-available listings are not a buyable price → never
+    # negotiation-grade; they appear only as a clearly-labeled reference option.
+    if getattr(c, "out_of_stock", False):
+        return False
     if not (0.05 * item.unit_price <= c.price <= 3.0 * item.unit_price):
         return False
     if _is_gated(c) or _pack_mismatch(item, c):
         return False
     if "page not found" in (c.rejected_reason or "").lower():
         return False
+    # a DETECTED wrong variant (wrong color/shade/size/flavor) is never price-match
+    # grade — blocks even an MPN match (which can't co-exist with a real conflict).
+    if getattr(c, "variant_conflict", False):
+        return False
+    # MPN match = identical product → price-match grade, overriding the free model's
+    # unreliable name/size/pack criteria on aggregator-locked pages.
+    if getattr(c, "mpn_confirmed", False):
+        return True
     # variant must be confirmed (Q2: unverified variants are NOT price_match grade
     # under the strict rule — they drop to alternate)
     if getattr(c, "variant_unverified", False):
@@ -382,7 +366,72 @@ def _option_priority(item, c: PriceCandidate):
     else:
         tier = 3
     unreliable = 1 if getattr(c, "price_unreliable", False) else 0
-    return (tier, unreliable, c.price if c.price is not None else 1e9)
+    oos = 1 if getattr(c, "out_of_stock", False) else 0
+    # ISSUE 3 / out-of-stock: neither an unreliable price nor an out-of-stock
+    # listing can sit in the top tiers (0/1), and an IN-STOCK option always
+    # outranks an out-of-stock one — so a buyable price always headlines over an
+    # unavailable one, even if the unavailable one is cheaper.
+    if unreliable or oos:
+        tier = max(tier, 2)
+    return (tier, oos, unreliable, c.price if c.price is not None else 1e9)
+
+
+def _poolable(item, c: PriceCandidate) -> bool:
+    """A candidate eligible to be shown as a price-match OPTION: priced within the
+    sane band, page-verified, not login-gated, not a dead listing."""
+    unit = item.unit_price
+    # SAVINGS-ONLY price_match (client QA): a candidate priced AT or ABOVE the
+    # Schein price is not a saving — it belongs in the alternate sheet as a
+    # reference, never in the price_match report. Disable via PRICEMATCH_SAVINGS_ONLY=0.
+    savings_only = os.environ.get("PRICEMATCH_SAVINGS_ONLY", "1") not in ("0", "false", "False")
+    # A confirmed EXACT/APPROXIMATE (or MPN-confirmed) match keeps the wide sanity
+    # band — a genuine deep discount is allowed. But a WEAK match (rejected/possible/
+    # unverified) that is implausibly cheap is almost always the WRONG product or a
+    # smaller pack (Oral-B: $6.20 single Healthy Gums / $11.25 trial vs a $50.99
+    # 72-count box) — require it to be at least 30% of the Schein unit price before
+    # it can pose as a price-match option, else it goes to the alternate sheet.
+    strong = c.match_type in ("exact", "approximate") or getattr(c, "mpn_confirmed", False)
+    floor = (0.05 if strong else 0.30) * unit
+    return (c.price is not None
+            and floor <= c.price <= 3.0 * unit
+            and (not savings_only or c.price < unit)       # must BEAT Schein — no-saving rows → alternate
+            and c.scraped_product_name is not None
+            and not _is_gated(c)
+            and not getattr(c, "out_of_stock", False)      # OOS → alternate sheet, never a price-match option
+            and not getattr(c, "variant_conflict", False)  # wrong color/shade/size/flavor → alternate, never price-match
+            and not getattr(c, "pack_conflict", False)     # different pack size → not a like-for-like price → alternate
+            and "page not found" not in (c.rejected_reason or "").lower())
+
+
+def _select_options(r: ItemResult, options_per_item: int = 3) -> list:
+    """The up-to-N candidates shown for this item in the Price Match report:
+    cheapest price-match-eligible EXACT first, then the next best by pack/variant
+    priority. Shared by the price-match writer (to render) and the alternate
+    writer (to EXCLUDE these so they aren't repeated)."""
+    # Dedup by URL AND by supplier domain: a single supplier should appear once
+    # (its best/cheapest listing), so the same store can't fill multiple option
+    # slots (stardentalsupplies showed twice for the Teal tips). Candidates are
+    # sorted by priority first, so the kept one per domain is the best.
+    pool, seen_u, seen_dom = [], set(), set()
+    for c in sorted(r.candidates, key=lambda c: _option_priority(r.item, c)):
+        d = _domain(c.url)
+        if not _poolable(r.item, c) or c.url in seen_u or d in seen_dom:
+            continue
+        seen_u.add(c.url); seen_dom.add(d)
+        pool.append(c)
+    if not pool:
+        return []
+    exacts = [c for c in pool if _pricematch_eligible(r.item, c)]
+    opts = []
+    if exacts:
+        opts.append(min(exacts, key=lambda c: c.price))   # cheapest eligible exact
+    for c in pool:
+        if len(opts) >= options_per_item:
+            break
+        if any(c is o for o in opts):
+            continue
+        opts.append(c)
+    return opts
 
 
 def write_price_match_report(order: ParsedOrder, results: List[ItemResult],
@@ -406,45 +455,10 @@ def write_price_match_report(order: ParsedOrder, results: List[ItemResult],
 
     groups = []
     for r in results:
-        # Build the candidate pool: every priced, page-verified candidate that
-        # is not gated/dead. (Pack/variant/size mismatches ARE allowed here now —
-        # they appear as Options 2-3 with a reason, and ALSO in the alternate
-        # sheet. Nothing is excluded from either stream.)
-        def _poolable(c):
-            unit = r.item.unit_price
-            return (c.price is not None
-                    and 0.05 * unit <= c.price <= 3.0 * unit
-                    and c.scraped_product_name is not None
-                    and not _is_gated(c)
-                    and "page not found" not in (c.rejected_reason or "").lower())
-
-        # Order the pool so pack/variant-matching candidates lead, then cheapest
-        # within each tier (client rule: priority to matching pack/variant in the
-        # 3 options, not just the lowest price). Option 1 below still pulls the
-        # cheapest EXACT first; Options 2-3 then fill from this prioritised order.
-        pool, seen_u = [], set()
-        for c in sorted(r.candidates, key=lambda c: _option_priority(r.item, c)):
-            if not _poolable(c) or c.url in seen_u:
-                continue
-            seen_u.add(c.url)
-            pool.append(c)
-        if not pool:
-            continue
-
-        # Option 1: cheapest EXACT (pack+variant+size match; brand may differ).
-        exacts = [c for c in pool if _pricematch_eligible(r.item, c)]
-        opts = []
-        if exacts:
-            opt1 = min(exacts, key=lambda c: c.price)   # cheapest exact
-            opts.append(opt1)
-        # Options 2-3 (and Option 1 if no exact): next best by pack/variant
-        # priority then price, excluding whatever is already chosen.
-        for c in pool:
-            if len(opts) >= options_per_item:
-                break
-            if any(c is o for o in opts):
-                continue
-            opts.append(c)
+        # Options shown for this item (cheapest eligible exact, then next best by
+        # pack/variant priority). Same selection the alternate writer uses to
+        # exclude these rows so they aren't repeated there.
+        opts = _select_options(r, options_per_item)
         if not opts:
             continue
         best_total = max(round((r.item.unit_price - c.price) * r.item.qty, 2)
@@ -466,6 +480,9 @@ def write_price_match_report(order: ParsedOrder, results: List[ItemResult],
             if getattr(c, "price_unreliable", False):
                 flags.append("⚠ PRICE UNRELIABLE — auto-extracted price conflicts with "
                              "the listing; confirm on the page before using")
+            if getattr(c, "out_of_stock", False):
+                flags.append("⚠ OUT OF STOCK — this listing is no longer available; "
+                             "not a buyable price, shown for reference only")
             flag_prefix = (" · ".join(flags) + " · ") if flags else ""
             if getattr(c, "is_generic_equivalent", False):
                 reason = ("GENERIC EQUIVALENT — same product type, different/no brand; "
@@ -518,6 +535,39 @@ def write_price_match_report(order: ParsedOrder, results: List[ItemResult],
                 ws.cell(row=ridx, column=3).font = OPTION_FONT
                 _money(ws, ridx, [6, 12, 13])
             ws.row_dimensions[ridx].height = 56
+
+        # Labelled backorder/long-lead row: net32 flips a seller between
+        # "Backordered" and "Long Handling Time" depending on the scrape's
+        # delivery location, so the genuine lowest (e.g. XLight Shine $26.73)
+        # would otherwise appear or vanish run-to-run. Surface the cheapest
+        # excluded seller — when it undercuts the best shown option — as a clearly
+        # labelled row so the buyer always sees it WITH its caveat and decides.
+        bo = []
+        for c in r.candidates:
+            for o in (getattr(c, "backorder_options", None) or []):
+                if o.get("price"):
+                    bo.append((o, c))
+        if bo:
+            shown_lo = min(c.price for c in opts)
+            o, c = min(bo, key=lambda t: t[0]["price"])
+            if o["price"] < shown_lo:
+                vend = o.get("vendor") or "seller"
+                status = o.get("status") or "Backordered"
+                per_unit = round(r.item.unit_price - o["price"], 2)
+                total = round(per_unit * r.item.qty, 2)
+                reason = (f"⚠ {status.upper()} — ${o['price']:,.2f} via {vend} on "
+                          f"{c.source_site} is the lowest listing but is NOT in stock "
+                          f"(net32 stock varies by location; verify before relying on it). "
+                          f"Shown for reference below the in-stock options.")
+                ws.append(["", "", "   ↳ ⚠ Backorder", "", "", o["price"],
+                           "BACKORDER", c.source_site, c.url, "—", reason,
+                           per_unit, total])
+                ridx = ws.max_row
+                _style_row(ws, ridx, len(PM_HEADERS), None, False, PM_WRAP,
+                           link_col=9, url=c.url)
+                ws.cell(row=ridx, column=3).font = OPTION_FONT
+                _money(ws, ridx, [6, 12, 13])
+                ws.row_dimensions[ridx].height = 56
         band += 1
     wb.save(out)
     n_rows = sum(len(o) for _, _, o in groups)
@@ -568,6 +618,11 @@ def write_alternate_purchase_list(order: ParsedOrder,
     entries = []   # (tier_rank, item_order_idx, price, row-args)
     order_idx = {i.schein_sku: n for n, i in enumerate(order.items)}
 
+    # Candidates already SHOWN as options in the Price Match report — exclude them
+    # here so the alternate sheet never repeats a row that's in price_match.
+    shown_in_pm = {(r.item.schein_sku, c.url)
+                   for r in (results or []) for c in _select_options(r)}
+
     # A — equivalency-table findings (confirmed substitutions)
     equivalency_skus = set()
     for f in findings:
@@ -594,19 +649,25 @@ def write_alternate_purchase_list(order: ParsedOrder,
     for r in (results or []):
         if r.item.schein_sku in equivalency_skus:
             continue
-        pool, seen = [], set()
+        pool, discovered, seen = [], [], set()
         for c in r.candidates:
             if c.url in seen:
                 continue
-            # include EVERYTHING reviewable — price_match options appear here
-            # too (user wants the alternate sheet to hold every option/price)
-            if not _reviewable(c) and c.price is None:
-                continue
             seen.add(c.url)
-            pool.append(c)
-        if not pool:
-            # item fully covered by price_match (all candidates eligible) OR
-            # genuinely nothing found — only show a placeholder when nothing found
+            if (r.item.schein_sku, c.url) in shown_in_pm:
+                continue                  # already shown in the Price Match report
+            if _reviewable(c):
+                pool.append(c)
+            elif c.price is None and "login" not in (c.rejected_reason or "").lower():
+                # Discovered during search but never priced this run — almost
+                # always the per-item scrape cap (only the first N of the
+                # discovered URLs are fetched). Surface them so the alternate
+                # sheet is a TRUE catch-all of every link not in the Price Match
+                # report. Login-gated URLs are deliberately left to the Flagged
+                # Sites sheet instead of cluttering this one.
+                discovered.append(c)
+        if not pool and not discovered:
+            # genuinely nothing found — placeholder so the item is never invisible
             if not _has_primary_row(r):
                 url = search_fallback_url(r.item)
                 entries.append((9, order_idx.get(r.item.schein_sku, 999), 0,
@@ -633,6 +694,16 @@ def write_alternate_purchase_list(order: ParsedOrder,
                              c.source_site, c.price, c.url or search_fallback_url(r.item),
                              f"{label} ({match_score(c.criteria, c.confidence)}%)",
                              basis, savings, pct)))
+        # catch-all rows: discovered links that were not priced this run
+        for c in discovered:
+            entries.append((8, order_idx.get(r.item.schein_sku, 999), 1e9,
+                            (r.item, c.title or "(discovered listing — not priced)",
+                             c.source_site, None, c.url or search_fallback_url(r.item),
+                             "NOT PRICED",
+                             "DISCOVERED — found during search but not priced this run "
+                             "(per-item scrape cap reached). Open the link to check the "
+                             "price, or raise SCRAPE_CAP_PER_ITEM to price more per item.",
+                             "—", None)))
 
     entries.sort(key=lambda e: (e[0], e[1], e[2]))
     for band, (_, _, _, args) in enumerate(entries):

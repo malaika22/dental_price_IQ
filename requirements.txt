@@ -4,6 +4,9 @@ pydantic>=2.6
 PyMuPDF>=1.24
 openpyxl>=3.1
 groq>=1.0
+# OpenAI SDK — only needed when LLM_PROVIDER is gemini/openai/openrouter
+# (Gemini & others expose an OpenAI-compatible endpoint the same client drives).
+openai>=1.30
 requests>=2.31
 python-multipart>=0.0.9
 python-dotenv>=1.0

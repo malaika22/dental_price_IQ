@@ -64,7 +64,7 @@ def parse_pack(description: str) -> tuple[Optional[int], Optional[str]]:
         return int(m.group(1)), "Pk"
     m = PACK_MULT_RE.search(description)
     if m:
-        return int(m.group(1)) * 1, None   # e.g. "2x445 Gr" -> 2 units of 445g
+        return int(m.group(1)), None   # e.g. "2x445 Gr" -> 2 units of 445g
     return None, None
 
 

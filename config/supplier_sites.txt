@@ -19,12 +19,64 @@ scottsdental.com
 practicon.com
 benco.com
 usdentaldepot.com
-amerdental.com
 dentalwholesaledirect.com
-primedentalsupply.com
 skydentalsupply.com
 pstshop.com
 darbydental.com
 shop.benco.com
 pattersondental.com
 orthazone.com
+thedentalmarket.net
+amtouch.com
+dentaldash.shop
+
+# ---------------------------------------------------------------------------
+# Added from manual-search coverage analysis (US dental/medical suppliers that
+# carried the lowest price on real orders but were not previously listed).
+# Deliberately EXCLUDES henryschein.com (the target supplier), non-US/foreign
+# storefronts (.ca/.com.au/.cz/Qatar — they price in non-USD and break the
+# comparison), and non-dental/junk domains.
+# ---------------------------------------------------------------------------
+chasedentalsupply.com
+topqualitygloves.com
+newarkdentalpemco.com
+pricenex.com
+afteractionmedical.com
+carolinadental.com
+allfordentist.com
+meisingerusa.com
+avtecdental.com
+ansondental.com
+supplydoc.com
+store.edgeendo.com
+allstardentalsupply.com
+acedentalsupplies.com
+medexsupply.com
+suprememed.com
+fireflysupply.com
+graylinemedical.com
+vitalitymedical.com
+usamedicalsurgical.com
+lexiconsupply.com
+alpinedentalshop.com
+mfidistribution.com
+honestmed.com
+goldburs.com
+jmudental.com
+straussdiamond.com
+globalburs.com
+franklindentalsupply.com
+wisdomdentalsupply.com
+medicalproductssupply.com
+asadentalsupplies.com
+zirc.com
+reliabledental.com
+quantumlabs.com
+dental.keystoneindustries.com
+steindentalsupplies.com
+royaldentalsupply.com
+tricountydental.com
+acesouthern.com
+dhpsupply.com
+midwestdental.com
+mvpdentalsupply.com

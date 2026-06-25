@@ -1,0 +1,44 @@
+# SKU -> MPN table  (client-editable, no code changes needed)
+# ---------------------------------------------------------------------------
+# Henry Schein order descriptions usually DON'T print the manufacturer part
+# number (MPN), so the system can only anchor matching on brand/name/variant/
+# pack for those items. This table supplies the MPN per Henry Schein SKU so the
+# pipeline can (1) search for the exact part across suppliers and (2) reject
+# listings whose part number conflicts — the single most precise match signal.
+#
+# Format (pipe-delimited; blank cells and lines starting with # are ignored):
+#   HENRY_SCHEIN_SKU | MPN | manufacturer (optional) | note (optional)
+#
+# MPN is the MANUFACTURER's number (universal across resellers), e.g. Meisinger
+# DCA06-170-HP-BL/O. For Henry Schein HOUSE BRANDS (Criterion, Acclean, the HS
+# tray covers / cotton rolls) there is no cross-supplier MPN — the number below
+# is the HS SKU itself; those still match on name/variant/pack, not MPN.
+# ---------------------------------------------------------------------------
+
+# --- manufacturer MPNs (cross-supplier — high value) ---
+8889527 | PF1715              | Coltene                    # ParaPost Fiber Lux Red size 5
+2013820 | 2K5025              | Pacdent                    # Mity K-Files 25mm #10
+2223852 | 678212              | Dentsply Sirona            # Mixing Tips Refill Teal 50mL 48/Bx
+2222660 | CW-6162             | Coltene                    # Dynamic Mixing Tips Yellow 40/Pk
+3122330 | 0077650FG           | Sultan Healthcare          # Genie Putty Rapid Set Berry 2x445g
+3865728 | 002039605           | Midmark                    # Speedclean Autoclave 16oz
+7013176 | 9736H-150-HP-TRQ    | Meisinger USA              # Meisinger Polisher 9736H-150
+7120116 | 524TPA1             | Sunstar                    # GUM Technique Deep Clean toothbrush
+7772551 | 7210FF              | 3M / Solventum             # 3M Clinpro Clear Fluoride No Flavor 100/Pk (FF=flavorless)
+7013349 | DCA06-170-HP-BL/O   | Meisinger USA              # Zirconia Pre-Polisher Medium Blue/Orange (NOT DCA05 smoothing)
+7013185 | 9742M-040-HP-BL/O   | Meisinger USA              # Meisinger Polisher 9742M-040
+3250498 | 80779741            | Procter & Gamble           # Oral-B Glide Deep Clean Mint 72
+9872474 | 305436              | Becton-Dickinson           # Sharps 3 Gal counter-balanced
+3120114 | 0021521FG           | Dentsply Sirona            # ReSURGE Cleaning Solution 33oz
+1403081 | 14-1100             | Metrex                     # CaviWipes 2.0 160/Cn
+3333466 | 425003              | GC America                 # Fuji II LC Capsules A3 48/Bx
+3333468 | 425004              | GC America                 # Fuji II LC Capsules A3.5 48/Bx (sheet mislabeled 425003)
+3120212 | 0077600FG           | Sultan Healthcare          # Genie VPS Rapid Set XLight 2/Pk
+7011085 | 841G-012-FG         | Meisinger USA              # Diamond FG Coarse 841G-012 (NOT 842)
+1392761 | S3160K              | Cranberry / Pro2 Solutions # S3+ Face Masks Level 3 BLACK 50/Bx
+
+# --- Henry Schein house brands (number is the HS SKU; matches on name/variant, not MPN) ---
+8969286 | 8969286            | Henry Schein               # Premium Cotton Rolls #2 2000/Bx
+1024081 | 1024081            | Henry Schein               # Tray Cover Aqua 8.5x12.25 1000/Ca
+1126830 | 5703541            | Henry Schein (Criterion)   # Criterion N300 glove Ice Blue Small 300
+1126831 | 1126831            | Henry Schein (Criterion)   # Criterion N300 glove Ice Blue Medium 300

@@ -12,7 +12,7 @@ import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 # On throttled hosts (e.g. Render free tier, 0.1 vCPU) Python's stdout is
 # block-buffered when not a TTY, so log lines emitted right before a blocking
@@ -40,13 +40,17 @@ OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 
-def run_pipeline(pdf_path: str | Path, parallel: int = int(os.environ.get("PIPELINE_PARALLEL", "1")),
+def run_pipeline(pdf_path: str | Path, parallel: Optional[int] = None,
                  skip_search: bool = False) -> dict:
     """Full Stage 1+2 run for one order PDF. Returns paths of the 3 reports.
 
     skip_search=True runs intake + AI parsing + report scaffolding only
     (used for parser validation / dry runs without API spend).
     """
+    # Resolve at call time (not at import via a default-arg expression) so a
+    # PIPELINE_PARALLEL set after this module is imported still takes effect.
+    if parallel is None:
+        parallel = int(os.environ.get("PIPELINE_PARALLEL", "1"))
     log.info("Pipeline starting — pdf=%s skip_search=%s parallel=%d",
              pdf_path, skip_search, parallel)
     try:
@@ -72,6 +76,17 @@ def run_pipeline(pdf_path: str | Path, parallel: int = int(os.environ.get("PIPEL
             log.info("Groq parse complete — %d item(s)", len(order.items))
         except Exception:
             log.exception("Groq parse failed — items will use raw descriptions as search queries")
+        # SKU→MPN enrichment from the persistent learned store (seeded from
+        # config/mpn_table.txt, validated + grown from page consensus). Anchors
+        # discovery on the exact part number; only page-VERIFIED MPNs are used to
+        # reject conflicting listings (a seed is a discovery hint until confirmed).
+        try:
+            nmpn = matcher.seed_and_apply_mpn(conn, order.items, CONFIG_DIR)
+            if nmpn:
+                log.info("MPN store — applied %d item(s) (verified MPNs reject conflicts; "
+                         "seeds are discovery hints until page-confirmed)", nmpn)
+        except Exception:
+            log.exception("MPN store apply failed — continuing without MPN enrichment")
 
     results: List[ItemResult] = []
     findings: List[EquivalencyFinding] = []
@@ -91,27 +106,53 @@ def run_pipeline(pdf_path: str | Path, parallel: int = int(os.environ.get("PIPEL
         log.info("Stage 1 — processing %d item(s) with %d worker(s), %ss cap per item",
                  len(order.items), parallel, item_budget)
         results_by_idx: dict[int, ItemResult] = {}
-        with ThreadPoolExecutor(max_workers=max(parallel, 2)) as ex:
-            futures = {n: ex.submit(matcher.process_item, it)
+
+        # SALVAGE: the worker stores its finished ItemResult into results_by_idx
+        # itself (dict assignment is atomic under the GIL). So if an item blows the
+        # per-item cap below, we do NOT immediately overwrite it with an empty
+        # result — the worker keeps running and, when it finishes, its real result
+        # (already populated with the deterministically-priced candidates) lands in
+        # the dict and is picked up at the end. An item only ends up empty if its
+        # worker truly never completes. This is what stops a slow-Groq item from
+        # being discarded with all its scraped pages and prices.
+        def _work(n, it):
+            r = matcher.process_item(it)
+            results_by_idx[n] = r
+            return r
+
+        # NOTE: deliberately NOT a `with ThreadPoolExecutor(...) as ex:` block.
+        # The context-manager exit calls shutdown(wait=True), which blocks on any
+        # worker still running — re-introducing the exact freeze the per-item
+        # wall-clock cap exists to prevent. We shut down with wait=False in the
+        # finally so the run returns promptly even if a worker is wedged; leftover
+        # threads finish or die in the background (the inner scrape's own hard
+        # deadline bounds their lifetime).
+        ex = ThreadPoolExecutor(max_workers=max(parallel, 2))
+        try:
+            futures = {n: ex.submit(_work, n, it)
                        for n, it in enumerate(order.items)}
             for n in range(len(order.items)):
                 sku = order.items[n].schein_sku
                 try:
-                    results_by_idx[n] = futures[n].result(timeout=item_budget)
-                    r = results_by_idx[n]
+                    futures[n].result(timeout=item_budget)
+                    r = results_by_idx.get(n)
                     log.info("Stage 1 done — SKU %s: %d candidate(s), best_exact=%s",
-                             sku, len(r.candidates),
+                             sku, len(r.candidates) if r else 0,
                              f"${r.best_exact.price} @ {r.best_exact.source_site}"
-                             if r.best_exact and r.best_exact.price else "none")
+                             if r and r.best_exact and r.best_exact.price else "none")
                 except _FTimeout:
-                    log.error("Stage 1 — SKU %s exceeded %ss wall-clock cap; "
-                              "abandoning it so the run finishes (a stuck scrape "
-                              "thread may linger in the background)", sku, item_budget)
-                    results_by_idx[n] = ItemResult(item=order.items[n])
+                    log.error("Stage 1 — SKU %s exceeded %ss wall-clock cap; leaving it "
+                              "to finish in the background — its result is salvaged if "
+                              "the worker completes before reports are written", sku, item_budget)
                 except Exception:
                     log.exception("Stage 1 — SKU %s crashed; continuing", sku)
-                    results_by_idx[n] = ItemResult(item=order.items[n])
-        results = [results_by_idx[n] for n in range(len(order.items))]
+                    results_by_idx.setdefault(n, ItemResult(item=order.items[n]))
+        finally:
+            ex.shutdown(wait=False)
+        # Fill any still-missing slots (workers that never completed) with an empty
+        # result so the report still lists the item.
+        results = [results_by_idx.get(n) or ItemResult(item=order.items[n])
+                   for n in range(len(order.items))]
 
         # Stage 2 — equivalency, table-driven
         entries = matcher.load_equivalency_table(CONFIG_DIR)
