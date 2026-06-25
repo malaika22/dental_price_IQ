@@ -1,24 +1,25 @@
 """Pipeline orchestrator and FastAPI surface.
 
-POST /orders/run   — upload a Henry Schein order PDF, get the three reports.
+POST /orders/run        — upload PDF, returns job_id (202), runs pipeline in background
+GET  /orders/{id}/events — SSE live progress (Groq, Firecrawl, SerpAPI, stages)
+GET  /orders/{id}        — job status + result when complete
 GET  /healthz
-CLI: python -m app.main path/to/order.pdf  (or use run_pipeline.py)
+GET  /reports/{name}
+CLI: python -m app.main path/to/order.pdf
 """
 from __future__ import annotations
+import asyncio
+import json
 import logging
 import os
 import shutil
 import sys
 import tempfile
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import List, Optional
 
-# On throttled hosts (e.g. Render free tier, 0.1 vCPU) Python's stdout is
-# block-buffered when not a TTY, so log lines emitted right before a blocking
-# network call (e.g. "scraping …") sit unflushed — making a slow scrape look
-# like a total freeze with no output. Force line-buffering so every log line
-# appears as it happens.
 try:
     sys.stdout.reconfigure(line_buffering=True)
     sys.stderr.reconfigure(line_buffering=True)
@@ -26,33 +27,36 @@ except Exception:
     pass
 
 from fastapi import FastAPI, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
-from . import ai, db, matcher, parser, reports
+from . import ai, db, jobs, matcher, parser, reports
 from . import search as search_mod
 from .models import EquivalencyFinding, ItemResult
+from .paths import init_data_dirs
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("pipeline")
 
 CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
-OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
-OUTPUT_DIR.mkdir(exist_ok=True)
+OUTPUT_DIR, DB_FILE = init_data_dirs()
+db.set_db_path(DB_FILE)
 
 
 def run_pipeline(pdf_path: str | Path, parallel: Optional[int] = None,
-                 skip_search: bool = False) -> dict:
-    """Full Stage 1+2 run for one order PDF. Returns paths of the 3 reports.
+                 skip_search: bool = False, job_id: Optional[str] = None) -> dict:
+    """Full Stage 1+2 run for one order PDF. Returns paths of the 3 reports."""
+    if job_id:
+        jobs.bind_job(job_id)
 
-    skip_search=True runs intake + AI parsing + report scaffolding only
-    (used for parser validation / dry runs without API spend).
-    """
-    # Resolve at call time (not at import via a default-arg expression) so a
-    # PIPELINE_PARALLEL set after this module is imported still takes effect.
     if parallel is None:
         parallel = int(os.environ.get("PIPELINE_PARALLEL", "1"))
+
+    jobs.emit("pipeline_start", pdf=str(pdf_path), skip_search=skip_search)
     log.info("Pipeline starting — pdf=%s skip_search=%s parallel=%d",
              pdf_path, skip_search, parallel)
+
+    jobs.emit("step_start", step="parse", label="Parsing order PDF")
     try:
         order = parser.parse_order_pdf(pdf_path)
     except Exception as e:
@@ -61,32 +65,41 @@ def run_pipeline(pdf_path: str | Path, parallel: Optional[int] = None,
     if not order.items:
         raise ValueError(f"No line items extracted from {pdf_path}")
 
-    # open DB up front so the per-SKU discovery cache can be loaded before the
-    # sweep (skips re-discovery of repeat items across runs)
-    conn = db.connect(OUTPUT_DIR / "dental_intel.sqlite3")
-    db.set_scrape_db_path(OUTPUT_DIR / "dental_intel.sqlite3")  # scrape cache uses same DB
+    jobs.emit("step_complete", step="parse",
+              reference=order.reference, items=len(order.items),
+              total=order.total_price, message=f"Extracted {len(order.items)} line items")
+
+    conn = db.connect(DB_FILE)
+    db.set_scrape_db_path(DB_FILE)
     if not skip_search:
         search_mod.load_discovery_cache(conn)
     log.info("Parsed %d items from %s (ref %s)", len(order.items),
              order.source_file, order.reference)
 
     if not skip_search:
+        jobs.emit("step_start", step="ai",
+                  label="AI product enrichment",
+                  provider=os.environ.get("LLM_PROVIDER", "groq"))
         try:
             ai.parse_items_batch(order.items)
             log.info("Groq parse complete — %d item(s)", len(order.items))
+            jobs.emit("step_complete", step="ai", items=len(order.items),
+                      message=f"AI enriched {len(order.items)} products")
         except Exception:
             log.exception("Groq parse failed — items will use raw descriptions as search queries")
-        # SKU→MPN enrichment from the persistent learned store (seeded from
-        # config/mpn_table.txt, validated + grown from page consensus). Anchors
-        # discovery on the exact part number; only page-VERIFIED MPNs are used to
-        # reject conflicting listings (a seed is a discovery hint until confirmed).
+            jobs.emit("step_warning", step="ai",
+                      message="AI parse failed — using raw descriptions")
+
+        jobs.emit("step_start", step="mpn", label="MPN lookup")
         try:
             nmpn = matcher.seed_and_apply_mpn(conn, order.items, CONFIG_DIR)
             if nmpn:
-                log.info("MPN store — applied %d item(s) (verified MPNs reject conflicts; "
-                         "seeds are discovery hints until page-confirmed)", nmpn)
+                log.info("MPN store — applied %d item(s)", nmpn)
+            jobs.emit("step_complete", step="mpn", enriched=nmpn or 0,
+                      message=f"MPN applied to {nmpn or 0} item(s)")
         except Exception:
             log.exception("MPN store apply failed — continuing without MPN enrichment")
+            jobs.emit("step_warning", step="mpn", message="MPN lookup failed — continuing")
 
     results: List[ItemResult] = []
     findings: List[EquivalencyFinding] = []
@@ -94,39 +107,31 @@ def run_pipeline(pdf_path: str | Path, parallel: Optional[int] = None,
     if skip_search:
         results = [ItemResult(item=i) for i in order.items]
     else:
-        # Stage 1 — market sweep + verification + 4-criteria matching,
-        # parallel across items. Each item gets a hard wall-clock cap that
-        # ACTUALLY fires: we wait on each future with its own timeout instead of
-        # as_completed (which never yields a future that never completes, so the
-        # old cap could not catch a truly-stuck item). A stuck scrape thread is
-        # abandoned and the run continues.
         from concurrent.futures import TimeoutError as _FTimeout
-        import time as _time
         item_budget = int(os.environ.get("ITEM_TIMEOUT_SEC", "180"))
+        jobs.emit("step_start", step="stage1",
+                  label="Market price search & verification",
+                  items_total=len(order.items), workers=parallel,
+                  message=f"Processing {len(order.items)} items")
         log.info("Stage 1 — processing %d item(s) with %d worker(s), %ss cap per item",
                  len(order.items), parallel, item_budget)
         results_by_idx: dict[int, ItemResult] = {}
+        items_total = len(order.items)
 
-        # SALVAGE: the worker stores its finished ItemResult into results_by_idx
-        # itself (dict assignment is atomic under the GIL). So if an item blows the
-        # per-item cap below, we do NOT immediately overwrite it with an empty
-        # result — the worker keeps running and, when it finishes, its real result
-        # (already populated with the deterministically-priced candidates) lands in
-        # the dict and is picked up at the end. An item only ends up empty if its
-        # worker truly never completes. This is what stops a slow-Groq item from
-        # being discarded with all its scraped pages and prices.
         def _work(n, it):
+            jobs.bind_job(job_id)
+            jobs.emit("item_start", index=n + 1, total=items_total,
+                      sku=it.schein_sku,
+                      description=(it.description or "")[:100])
             r = matcher.process_item(it)
             results_by_idx[n] = r
+            best = None
+            if r.best_exact and r.best_exact.price:
+                best = f"${r.best_exact.price:.2f} @ {r.best_exact.source_site}"
+            jobs.emit("item_complete", index=n + 1, total=items_total,
+                      sku=it.schein_sku, candidates=len(r.candidates), best_exact=best)
             return r
 
-        # NOTE: deliberately NOT a `with ThreadPoolExecutor(...) as ex:` block.
-        # The context-manager exit calls shutdown(wait=True), which blocks on any
-        # worker still running — re-introducing the exact freeze the per-item
-        # wall-clock cap exists to prevent. We shut down with wait=False in the
-        # finally so the run returns promptly even if a worker is wedged; leftover
-        # threads finish or die in the background (the inner scrape's own hard
-        # deadline bounds their lifetime).
         ex = ThreadPoolExecutor(max_workers=max(parallel, 2))
         try:
             futures = {n: ex.submit(_work, n, it)
@@ -141,21 +146,20 @@ def run_pipeline(pdf_path: str | Path, parallel: Optional[int] = None,
                              f"${r.best_exact.price} @ {r.best_exact.source_site}"
                              if r and r.best_exact and r.best_exact.price else "none")
                 except _FTimeout:
-                    log.error("Stage 1 — SKU %s exceeded %ss wall-clock cap; leaving it "
-                              "to finish in the background — its result is salvaged if "
-                              "the worker completes before reports are written", sku, item_budget)
+                    log.error("Stage 1 — SKU %s exceeded %ss wall-clock cap", sku, item_budget)
+                    jobs.emit("item_timeout", sku=sku, seconds=item_budget)
                 except Exception:
                     log.exception("Stage 1 — SKU %s crashed; continuing", sku)
                     results_by_idx.setdefault(n, ItemResult(item=order.items[n]))
         finally:
             ex.shutdown(wait=False)
-        # Fill any still-missing slots (workers that never completed) with an empty
-        # result so the report still lists the item.
         results = [results_by_idx.get(n) or ItemResult(item=order.items[n])
                    for n in range(len(order.items))]
+        jobs.emit("step_complete", step="stage1", items=len(order.items),
+                  message=f"Price search complete for {len(order.items)} items")
 
-        # Stage 2 — equivalency, table-driven
         entries = matcher.load_equivalency_table(CONFIG_DIR)
+        jobs.emit("step_start", step="stage2", label="Equivalency analysis")
         if entries:
             log.info("Stage 2 — equivalency table has %d entr(ies)", len(entries))
         for r in results:
@@ -165,9 +169,14 @@ def run_pipeline(pdf_path: str | Path, parallel: Optional[int] = None,
                     findings.append(f)
                     log.info("Stage 2 — SKU %s equivalency: %s",
                              r.item.schein_sku, f.confidence_level)
+                    jobs.emit("equivalency_found", sku=r.item.schein_sku,
+                              level=f.confidence_level)
             except Exception:
                 log.exception("Stage 2 failed for SKU %s", r.item.schein_sku)
+        jobs.emit("step_complete", step="stage2", findings=len(findings),
+                  message=f"Found {len(findings)} equivalency match(es)")
 
+    jobs.emit("step_start", step="reports", label="Generating reports")
     log.info("Writing reports for ref=%s", order.reference)
     stem = (order.reference or Path(pdf_path).stem).replace("/", "_")
     p1 = reports.write_price_match_report(order, results, OUTPUT_DIR / f"{stem}_price_match.xlsx")
@@ -188,8 +197,9 @@ def run_pipeline(pdf_path: str | Path, parallel: Optional[int] = None,
             order.reference, len(order.items), fc["scrapes"], fc["skipped"],
             fc["credits"], fc["exhausted"],
         )
+        jobs.emit("firecrawl_summary", **fc)
 
-    return {
+    summary = {
         "reference": order.reference,
         "items": len(order.items),
         "total": order.total_price,
@@ -198,16 +208,80 @@ def run_pipeline(pdf_path: str | Path, parallel: Optional[int] = None,
         "alternate_purchase_list": str(p2),
         "evidence_file": str(p3),
     }
+    jobs.emit("step_complete", step="reports", message="Reports ready for download")
+    return summary
 
 
 # ------------------------------------------------------------------ FastAPI
 
-app = FastAPI(title="Dental Supply Price Intelligence", version="1.0")
+app = FastAPI(title="Dental Supply Price Intelligence", version="1.1")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5500",
+        "http://127.0.0.1:5500",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
+
+
+def _run_job_in_thread(job_id: str, tmp_path: str, filename: str) -> None:
+    import time as _time
+    started = _time.time()
+    try:
+        jobs.bind_job(job_id)
+        jobs.set_status(job_id, "running")
+        summary = run_pipeline(tmp_path, job_id=job_id)
+        duration_ms = int((_time.time() - started) * 1000)
+        jobs.complete_job(job_id, summary)
+        db.update_order_run(
+            job_id,
+            reference=summary.get("reference"),
+            status="completed",
+            items=summary.get("items", 0),
+            total_price=summary.get("total") or summary.get("computed_total"),
+            duration_ms=duration_ms,
+            price_match_report=summary.get("price_match_report"),
+            alternate_purchase_list=summary.get("alternate_purchase_list"),
+            evidence_file=summary.get("evidence_file"),
+            completed_at=_time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime()),
+        )
+        log.info("Job %s — success ref=%s", job_id, summary.get("reference"))
+    except ValueError as e:
+        log.warning("Job %s — bad request: %s", job_id, e)
+        jobs.fail_job(job_id, str(e))
+        db.update_order_run(
+            job_id,
+            status="failed",
+            error=str(e),
+            duration_ms=int((_time.time() - started) * 1000),
+            completed_at=_time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime()),
+        )
+    except Exception as e:
+        log.exception("Job %s — pipeline failed", job_id)
+        jobs.fail_job(job_id, str(e))
+        db.update_order_run(
+            job_id,
+            status="failed",
+            error=str(e),
+            duration_ms=int((_time.time() - started) * 1000),
+            completed_at=_time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime()),
+        )
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
 
 @app.post("/orders/run")
@@ -216,16 +290,84 @@ async def run_order(file: UploadFile):
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
         shutil.copyfileobj(file.file, tmp)
         tmp_path = tmp.name
-    try:
-        summary = run_pipeline(tmp_path)
-        log.info("POST /orders/run — success ref=%s", summary.get("reference"))
-        return JSONResponse(summary)
-    except ValueError as e:
-        log.warning("POST /orders/run — bad request: %s", e)
-        return JSONResponse({"error": str(e)}, status_code=400)
-    except Exception as e:
-        log.exception("pipeline failed")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    job_id = jobs.create_job(file.filename or "order.pdf")
+    fname = file.filename or "order.pdf"
+    db.create_order_run(job_id, filename=fname)
+    jobs.bind_job(job_id)
+    jobs.emit("upload_complete", filename=fname, job_id=job_id)
+    threading.Thread(target=_run_job_in_thread, args=(job_id, tmp_path, fname), daemon=True).start()
+    return JSONResponse({"job_id": job_id, "status": "queued"}, status_code=202)
+
+
+@app.get("/orders/history")
+def order_history():
+    db.backfill_order_runs_from_output(OUTPUT_DIR)
+    runs = db.list_order_runs()
+    out = []
+    for r in runs:
+        entry = {
+            "id": r["id"],
+            "fileName": r["filename"],
+            "reference": r["reference"] or r["filename"].replace(".pdf", ""),
+            "items": r["items"] or 0,
+            "total": r["total_price"],
+            "status": r["status"],
+            "createdAt": r["created_at"],
+            "completedAt": r["completed_at"],
+            "durationMs": r["duration_ms"],
+            "error": r["error"],
+        }
+        if r["status"] == "completed" and r["price_match_report"]:
+            entry["reports"] = {
+                "price_match_report": r["price_match_report"],
+                "alternate_purchase_list": r["alternate_purchase_list"],
+                "evidence_file": r["evidence_file"],
+            }
+        out.append(entry)
+    return out
+
+
+@app.get("/orders/{job_id}")
+def get_order_job(job_id: str):
+    job = jobs.get_job(job_id)
+    if not job:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return {
+        "job_id": job_id,
+        "status": job.status,
+        "filename": job.filename,
+        "result": job.result,
+        "error": job.error,
+    }
+
+
+@app.get("/orders/{job_id}/events")
+async def order_events(job_id: str):
+    job = jobs.get_job(job_id)
+    if not job:
+        return JSONResponse({"error": "not found"}, status_code=404)
+
+    async def stream():
+        sent_done = False
+        while not sent_done:
+            while not job.events.empty():
+                evt = job.events.get_nowait()
+                yield f"data: {json.dumps(evt)}\n\n"
+                if evt.get("event") in ("pipeline_complete", "pipeline_error"):
+                    sent_done = True
+                    break
+            if sent_done:
+                break
+            if job.status in ("complete", "failed") and job.events.empty():
+                yield f"data: {json.dumps({'event': 'stream_end', 'data': {'status': job.status}})}\n\n"
+                break
+            await asyncio.sleep(0.2)
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get("/reports/{name}")
@@ -238,10 +380,6 @@ def get_report(name: str):
 
 if __name__ == "__main__":
     argv = sys.argv[1:]
-    # One-shot discovery-cache purge flags (translate to the env hook used by
-    # load_discovery_cache, so the same path works for CLI and FastAPI):
-    #   --purge-discovery-all          wipe the whole discovery cache
-    #   --purge-discovery=SKU[,SKU]    clear specific SKUs (re-discovered fresh)
     for a in argv:
         if a == "--purge-discovery-all":
             os.environ["DISCOVERY_PURGE_ALL"] = "1"
