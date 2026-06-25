@@ -441,9 +441,8 @@ def _agg_debug_dump(url, dom, section, markdown, options, backorder,
     Best-effort: never raises into the scrape path."""
     try:
         import hashlib
-        dbg_dir = Path(os.environ.get(
-            "AGG_DEBUG_DIR",
-            Path(__file__).resolve().parent.parent / "output" / "agg_debug"))
+        from .paths import resolve_agg_debug_dir
+        dbg_dir = resolve_agg_debug_dir()
         dbg_dir.mkdir(parents=True, exist_ok=True)
         h = hashlib.sha1((url or "").encode("utf-8")).hexdigest()[:10]
         slug = re.sub(r"[^a-zA-Z0-9]+", "-", (url or "").split("//")[-1])[:60].strip("-")

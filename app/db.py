@@ -12,12 +12,14 @@ _DB_PATH: Path | None = None
 def set_db_path(path: str | Path) -> None:
     global _DB_PATH
     _DB_PATH = Path(path)
+    set_scrape_db_path(_DB_PATH)
 
 
 def resolve_db_path() -> Path:
     if _DB_PATH:
         return _DB_PATH
-    return Path(os.environ.get("DENTAL_DB_PATH", "dental_intel.sqlite3"))
+    from .paths import resolve_db_path as _resolve
+    return _resolve()
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS orders (
@@ -359,11 +361,18 @@ def purge_discovery(conn, skus=None) -> tuple[int, int]:
 
 import threading as _threading
 _scrape_lock = _threading.Lock()
-_SCRAPE_DB_PATH = {"p": "dental_intel.sqlite3"}
+_scrape_db_override: str | None = None
 
 
 def set_scrape_db_path(path) -> None:
-    _SCRAPE_DB_PATH["p"] = str(path)
+    global _scrape_db_override
+    _scrape_db_override = str(path)
+
+
+def _scrape_db_file() -> str:
+    if _scrape_db_override:
+        return _scrape_db_override
+    return str(resolve_db_path())
 
 
 def get_cached_scrape(url: str, max_age_hours: int = 24) -> str | None:
@@ -373,7 +382,7 @@ def get_cached_scrape(url: str, max_age_hours: int = 24) -> str | None:
         return None
     try:
         with _scrape_lock:
-            c = sqlite3.connect(_SCRAPE_DB_PATH["p"], timeout=10)
+            c = sqlite3.connect(_scrape_db_file(), timeout=10)
             try:
                 cur = c.execute(
                     "SELECT markdown FROM scrape_cache WHERE url=? AND "
@@ -396,7 +405,7 @@ def save_scrape(url: str, markdown: str) -> None:
         return
     try:
         with _scrape_lock:
-            c = sqlite3.connect(_SCRAPE_DB_PATH["p"], timeout=10)
+            c = sqlite3.connect(_scrape_db_file(), timeout=10)
             try:
                 c.execute(
                     "INSERT OR REPLACE INTO scrape_cache(url, markdown, scraped_at)"
@@ -416,7 +425,7 @@ def get_cached_extract(key: str, max_age_hours: int = 24) -> dict | None:
         return None
     try:
         with _scrape_lock:
-            c = sqlite3.connect(_SCRAPE_DB_PATH["p"], timeout=10)
+            c = sqlite3.connect(_scrape_db_file(), timeout=10)
             try:
                 cur = c.execute(
                     "SELECT payload FROM extract_cache WHERE key=? AND "
@@ -438,7 +447,7 @@ def save_extract(key: str, payload: dict) -> None:
         return
     try:
         with _scrape_lock:
-            c = sqlite3.connect(_SCRAPE_DB_PATH["p"], timeout=10)
+            c = sqlite3.connect(_scrape_db_file(), timeout=10)
             try:
                 c.execute(
                     "INSERT OR REPLACE INTO extract_cache(key, payload, extracted_at)"
@@ -482,7 +491,7 @@ def upsert_mpn_now(schein_sku, mpn, manufacturer=None, source="page-consensus",
         return
     try:
         with _scrape_lock:
-            c = sqlite3.connect(_SCRAPE_DB_PATH["p"], timeout=10)
+            c = sqlite3.connect(_scrape_db_file(), timeout=10)
             try:
                 c.execute(
                     "INSERT OR REPLACE INTO mpn_store(schein_sku, mpn, manufacturer, "
@@ -503,7 +512,7 @@ def save_discovery_now(schein_sku: str, urls: list) -> None:
         return
     try:
         with _scrape_lock:
-            c = sqlite3.connect(_SCRAPE_DB_PATH["p"], timeout=10)
+            c = sqlite3.connect(_scrape_db_file(), timeout=10)
             try:
                 c.execute(
                     "INSERT OR REPLACE INTO discovery_cache(schein_sku, urls_json, discovered_at)"

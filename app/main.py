@@ -33,14 +33,13 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from . import ai, db, jobs, matcher, parser, reports
 from . import search as search_mod
 from .models import EquivalencyFinding, ItemResult
+from .paths import init_data_dirs
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("pipeline")
 
 CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
-OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
-OUTPUT_DIR.mkdir(exist_ok=True)
-DB_FILE = OUTPUT_DIR / "dental_intel.sqlite3"
+OUTPUT_DIR, DB_FILE = init_data_dirs()
 db.set_db_path(DB_FILE)
 
 
