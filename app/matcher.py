@@ -706,7 +706,7 @@ def load_mpn_table(config_dir: Path) -> dict:
     table: dict = {}
     if not f.exists():
         return table
-    for line in f.read_text().splitlines():
+    for line in f.read_text(encoding="utf-8").splitlines():
         line = line.split("#")[0].strip()          # trailing # comment
         if not line:
             continue
@@ -847,7 +847,7 @@ def load_equivalency_table(config_dir: Path) -> List[EquivalencyEntry]:
     entries: List[EquivalencyEntry] = []
     if not f.exists():
         return entries
-    for line in f.read_text().splitlines():
+    for line in f.read_text(encoding="utf-8").splitlines():
         line = line.split("#")[0].strip()
         if not line:
             continue

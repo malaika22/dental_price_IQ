@@ -644,7 +644,7 @@ def load_excluded_domains() -> List[str]:
     if not f.exists():
         return ["henryschein.com", "ebay.com", "amazon.com"]
     out = []
-    for line in f.read_text().splitlines():
+    for line in f.read_text(encoding="utf-8").splitlines():
         line = line.split("#")[0].strip().lower()
         if line:
             out.append(line)
@@ -660,7 +660,7 @@ def load_supplier_sites() -> List[str]:
     if not f.exists():
         return []
     out = []
-    for line in f.read_text().splitlines():
+    for line in f.read_text(encoding="utf-8").splitlines():
         line = line.split("#")[0].strip().lower()
         if line:
             out.append(line)
@@ -680,7 +680,7 @@ def load_seed_urls() -> dict:
     out: dict = {}
     if not f.exists():
         return out
-    for line in f.read_text().splitlines():
+    for line in f.read_text(encoding="utf-8").splitlines():
         line = line.split("#")[0].strip()
         if not line or "|" not in line:
             continue
@@ -993,6 +993,10 @@ def _serpapi(params: dict) -> dict:
             r.raise_for_status()
             with _serp_lock:
                 _serp_state["consecutive_failures"] = 0   # success resets the wall counter
+            from .jobs import emit
+            emit("serpapi", action="search",
+                 engine=params.get("engine", "google"),
+                 query=(params.get("q") or "")[:120])
             return r.json()
         except requests.HTTPError as e:
             status = getattr(getattr(e, "response", None), "status_code", None)
@@ -1353,6 +1357,9 @@ def _firecrawl_search(query: str, cands: list, seen: set, *,
     if added:
         log.info("Firecrawl /search (%s) — +%d candidate(s) for %r (credits used=%s, left=%d)",
                  stage, added, query[:40], used, _fc_credits_left())
+        from .jobs import emit
+        emit("firecrawl", action="search", stage=stage, query=query[:120],
+             results=added, credits=used)
     return added
 
 
@@ -1411,6 +1418,9 @@ def _firecrawl_supplier_gap_sweep(item: OrderLineItem, cands: list, seen: set) -
 def market_sweep(item: OrderLineItem, max_candidates: int = 14) -> tuple[List[PriceCandidate], List[str]]:
     """Broad public sweep. Runs on EVERY item EVERY run (PRD 4.2)."""
     queries = _item_queries(item)
+    from .jobs import emit
+    emit("discovery_start", sku=item.schein_sku, queries=queries,
+         message=f"Searching prices for SKU {item.schein_sku}")
     log.info("SKU %s — market sweep starting (%d quer%s: %s)",
              item.schein_sku, len(queries), "y" if len(queries) == 1 else "ies",
              " | ".join(q[:60] for q in queries))
@@ -1630,6 +1640,8 @@ def market_sweep(item: OrderLineItem, max_candidates: int = 14) -> tuple[List[Pr
                  shortlist[0].price, shortlist[0].source_site)
     else:
         log.warning("SKU %s — sweep done: no candidates found", item.schein_sku)
+    emit("discovery_complete", sku=item.schein_sku,
+         shortlisted=len(shortlist), total_found=len(cands))
     return shortlist, flagged
 
 
@@ -2237,6 +2249,9 @@ def firecrawl_verify(c: PriceCandidate, sku: str = "", allow_paid: bool = True) 
             return c
         _fc_state["scrapes"] += 1
     c._paid_scrape = True            # a real (billed) Firecrawl scrape is being spent
+    from .jobs import emit
+    emit("firecrawl", action="scrape", sku=sku, site=c.source_site, url=c.url[:120],
+         message=f"Firecrawl scraping {c.source_site}")
     log.info("%sscraping %s (%s) …", tag, c.source_site, c.url[:100])
     try:
         # Hard total-time deadline: requests' read timeout resets on every byte,

@@ -2,8 +2,22 @@
 (tables present, empty — PRD Section 10)."""
 from __future__ import annotations
 import json
+import os
 import sqlite3
 from pathlib import Path
+
+_DB_PATH: Path | None = None
+
+
+def set_db_path(path: str | Path) -> None:
+    global _DB_PATH
+    _DB_PATH = Path(path)
+
+
+def resolve_db_path() -> Path:
+    if _DB_PATH:
+        return _DB_PATH
+    return Path(os.environ.get("DENTAL_DB_PATH", "dental_intel.sqlite3"))
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS orders (
@@ -94,6 +108,22 @@ CREATE TABLE IF NOT EXISTS reorder_projections (
     id INTEGER PRIMARY KEY,
     schein_sku TEXT, projected_date TEXT, projected_qty INTEGER, basis TEXT
 );
+-- UI order history (persists across browser clears)
+CREATE TABLE IF NOT EXISTS order_runs (
+    id TEXT PRIMARY KEY,
+    reference TEXT,
+    filename TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'processing',
+    items INTEGER DEFAULT 0,
+    total_price REAL,
+    error TEXT,
+    duration_ms INTEGER,
+    price_match_report TEXT,
+    alternate_purchase_list TEXT,
+    evidence_file TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    completed_at TEXT
+);
 """
 
 
@@ -142,6 +172,114 @@ def persist_run(conn, order, results, findings) -> int:
              f.est_savings_total))
     conn.commit()
     return order_id
+
+
+# ------------------------------------------------------- order runs (UI) ----
+
+def _runs_conn() -> sqlite3.Connection:
+    return connect(resolve_db_path())
+
+
+def create_order_run(run_id: str, filename: str, reference: str | None = None) -> None:
+    conn = _runs_conn()
+    try:
+        conn.execute(
+            "INSERT INTO order_runs(id, reference, filename, status) VALUES (?,?,?,?)",
+            (run_id, reference, filename, "processing"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def update_order_run(run_id: str, **fields) -> None:
+    allowed = {
+        "reference", "filename", "status", "items", "total_price", "error",
+        "duration_ms", "price_match_report", "alternate_purchase_list",
+        "evidence_file", "completed_at",
+    }
+    cols = {k: v for k, v in fields.items() if k in allowed}
+    if not cols:
+        return
+    sets = ", ".join(f"{k}=?" for k in cols)
+    conn = _runs_conn()
+    try:
+        conn.execute(
+            f"UPDATE order_runs SET {sets} WHERE id=?",
+            (*cols.values(), run_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def backfill_order_runs_from_output(output_dir: Path) -> None:
+    """Register legacy completed runs from xlsx files already on disk."""
+    from datetime import datetime, timezone
+
+    output_dir = Path(output_dir)
+    conn = _runs_conn()
+    try:
+        for p in output_dir.glob("*_price_match.xlsx"):
+            stem = p.stem[: -len("_price_match")]
+            run_id = f"legacy-{stem}"
+            if conn.execute("SELECT 1 FROM order_runs WHERE id=?", (run_id,)).fetchone():
+                continue
+            alt = output_dir / f"{stem}_alternate_purchases.xlsx"
+            ev = output_dir / f"{stem}_evidence.xlsx"
+            row = conn.execute(
+                "SELECT o.id, o.reference, o.source_file, o.total_price, o.created_at"
+                " FROM orders o WHERE o.reference=? ORDER BY o.id DESC LIMIT 1",
+                (stem,),
+            ).fetchone()
+            items = 0
+            ref, src, total, created = stem, f"{stem}.pdf", None, None
+            if row:
+                oid, ref, src, total, created = row
+                cnt = conn.execute(
+                    "SELECT COUNT(*) FROM order_items WHERE order_id=?", (oid,)
+                ).fetchone()
+                items = cnt[0] if cnt else 0
+            if not created:
+                created = datetime.fromtimestamp(
+                    p.stat().st_mtime, tz=timezone.utc
+                ).strftime("%Y-%m-%dT%H:%M:%SZ")
+            conn.execute(
+                "INSERT INTO order_runs(id, reference, filename, status, items,"
+                " total_price, price_match_report, alternate_purchase_list,"
+                " evidence_file, created_at, completed_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    run_id, ref, Path(src).name if src else f"{stem}.pdf",
+                    "completed", items, total,
+                    str(p), str(alt) if alt.exists() else None,
+                    str(ev) if ev.exists() else None,
+                    created, created,
+                ),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def list_order_runs(limit: int = 200) -> list[dict]:
+    conn = _runs_conn()
+    try:
+        cur = conn.execute(
+            "SELECT id, reference, filename, status, items, total_price, error,"
+            " duration_ms, price_match_report, alternate_purchase_list,"
+            " evidence_file, created_at, completed_at"
+            " FROM order_runs ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        )
+        keys = [
+            "id", "reference", "filename", "status", "items", "total_price",
+            "error", "duration_ms", "price_match_report", "alternate_purchase_list",
+            "evidence_file", "created_at", "completed_at",
+        ]
+        return [dict(zip(keys, row)) for row in cur.fetchall()]
+    finally:
+        conn.close()
 
 
 # ---------------------------------------------------- discovery cache -------

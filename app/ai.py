@@ -89,6 +89,7 @@ else:
 
 from .models import OrderLineItem, PriceCandidate
 from . import db
+from .jobs import emit
 
 log = logging.getLogger(__name__)
 
@@ -754,20 +755,27 @@ Order lines:
 
 def parse_items_batch(items: List[OrderLineItem], chunk_size: int = 12) -> List[OrderLineItem]:
     """Batched parsing. Chunked to stay inside free-tier output-token limits."""
+    emit("groq", action="start", phase="parse_batch", provider=LLM_PROVIDER,
+         items=len(items), message=f"{LLM_PROVIDER.upper()} parsing {len(items)} product descriptions")
     by_sku = {}
     for start in range(0, len(items), chunk_size):
         chunk = items[start:start + chunk_size]
         lines = "\n".join(
             f'{i.schein_sku} | "{i.description}" | UOM {i.uom}' for i in chunk
         )
+        emit("groq", action="chunk", phase="parse_batch", provider=LLM_PROVIDER,
+             chunk=start // chunk_size + 1, items=len(chunk))
         try:
             data = _ask_json(PARSE_PROMPT.format(lines=lines), max_tokens=4000)
         except Exception:
             log.exception("Groq parse chunk failed (items %d–%d) — falling back to raw descriptions",
                           start + 1, start + len(chunk))
+            emit("groq", action="chunk_failed", phase="parse_batch", provider=LLM_PROVIDER)
             continue
         for d in _results(data):
             by_sku[str(d.get("sku"))] = d
+    emit("groq", action="complete", phase="parse_batch", provider=LLM_PROVIDER,
+         items=len(items), message=f"{LLM_PROVIDER.upper()} enrichment complete")
     for it in items:
         d = by_sku.get(it.schein_sku, {})
         it.brand = d.get("brand")
@@ -1033,7 +1041,13 @@ def extract_and_validate_batch(item, candidates: List[PriceCandidate]) -> None:
     log.info("SKU %s — %d scraped page(s): %d cache hit(s), %d to extract",
              item.schein_sku, len(pending), hits, len(todo))
     if not todo:
+        emit("groq", action="cache_only", phase="extract_validate", provider=LLM_PROVIDER,
+             sku=item.schein_sku, pages=len(pending))
         return
+
+    emit("groq", action="start", phase="extract_validate", provider=LLM_PROVIDER,
+         sku=item.schein_sku, pages=len(todo), cache_hits=hits,
+         message=f"{LLM_PROVIDER.upper()} validating {len(todo)} page(s) for SKU {item.schein_sku}")
 
     # GROQ EXTRACT CAP (speed, accuracy-preserving): validating a page that ALREADY
     # has a deterministic price (aggregator lock or single-offer structured) is a
@@ -1198,6 +1212,9 @@ def extract_and_validate_batch(item, candidates: List[PriceCandidate]) -> None:
     for start in range(0, len(todo), CHUNK):
         _run(todo[start:start + CHUNK], PER_PAGE)
     _escalate(todo)
+    emit("groq", action="complete", phase="extract_validate", provider=LLM_PROVIDER,
+         sku=item.schein_sku, pages=len(todo),
+         message=f"{LLM_PROVIDER.upper()} validation done for SKU {item.schein_sku}")
     return
 
 
