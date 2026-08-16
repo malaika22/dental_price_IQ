@@ -61,6 +61,7 @@ class PriceCandidate(BaseModel):
     price_locked: bool = False            # price set deterministically (aggregator table parser); AI must not overwrite it
     is_generic_equivalent: bool = False  # same product type, different (or no) brand
     in_stock: Optional[bool] = None
+    marketplace: Optional[str] = None    # "amazon" | "walmart" | "ebay" — candidate from the dedicated marketplace sweep; rendered as its own 🅐/🅦/🅔 row in price_match, never mixed into the regular supplier options
     # Lowest-priced sellers EXCLUDED from the lock because they are backordered /
     # out-of-stock (net32 flips a seller between "Backordered" and "Long Handling
     # Time" by scrape location). Captured so the report can surface them as a
@@ -78,6 +79,10 @@ class PriceCandidate(BaseModel):
 class ItemResult(BaseModel):
     item: OrderLineItem
     candidates: List[PriceCandidate] = Field(default_factory=list)
+    # Marketplace (Amazon/Walmart/eBay) candidates — kept OUT of `candidates` so
+    # they can never claim a regular option slot, become best_exact, or appear in
+    # the alternate sheet; the report renders them as dedicated per-item rows.
+    marketplace_candidates: List[PriceCandidate] = Field(default_factory=list)
     best_exact: Optional[PriceCandidate] = None
     flagged_sites: List[str] = Field(default_factory=list)
     routed_to_alternate: bool = False

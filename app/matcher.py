@@ -77,6 +77,44 @@ _PACK_COUNT_RES = (
 _SINGLE_RE = re.compile(
     r"\b(?:sold\s+(?:individually|singly|separately)|single\s+(?:post|unit|item|piece|pack)|"
     r"1\s*(?:per|/)\s*(?:pack|pkg|package|box)|each\s+post|individual\s+post)\b", re.I)
+# Explicit pack count in a product HEADING ("300/Box", "160 Count", "48/Pk",
+# "4 x 380ml Cartridge") — anchored to a pack keyword, or to an "N x <qty+unit>"
+# multiplier whose second number carries a VOLUME/WEIGHT unit, so "0.1 ml" /
+# "A3.5" / dimensions like 8.5 x 12.25 can never match.
+_HEAD_PACK_RE = re.compile(
+    r"\b(\d{1,5})\s*(?:/\s*|-|\s+per\s+|\s+)"
+    r"(?:box|bx|pk|pack|pkg|count|ct|can|cn|case|ca|carton)\b"
+    r"|\b(\d{1,4})\s*[x×]\s*\d+(?:\.\d+)?\s*(?:ml|mls|cc|g|gr|gm|oz|lb|l)\b", re.I)
+# Garment/glove size ladder for the heading-confirmation conflict check. Word
+# sizes match case-insensitively; bare S/M/L/XS/XL only as UPPERCASE standalone
+# tokens (as printed in Schein descriptions: "Nitrile S 300/Bx"), so "50mL",
+# "M839" or lowercase prose can never register as a size.
+_SIZE_WORD_RE = re.compile(r"\b(x-?small|x-?large|small|medium|large)\b", re.I)
+_SIZE_LETTER_RE = re.compile(r"\b(XS|XL|S|M|L)\b")
+_SIZE_CANON = {"xsmall": "xs", "small": "s", "medium": "m", "large": "l", "xlarge": "xl"}
+
+
+def _size_ladder(text: str) -> set:
+    out = set()
+    for m in _SIZE_WORD_RE.finditer(text or ""):
+        t = m.group(1).lower().replace("-", "")
+        out.add(_SIZE_CANON.get(t, t))
+    for m in _SIZE_LETTER_RE.finditer(text or ""):
+        out.add(m.group(1).lower())
+    return out
+
+
+# Impression-material viscosity ("body") ladder for heading confirmation.
+_BODY_RE = re.compile(r"\b(x-?light|extra\s+light|xlight|light|medium|heavy|mono(?:phase)?)\s+bod(?:y|ied)\b|\bputty\b", re.I)
+
+
+def _body_ladder(text: str) -> set:
+    out = set()
+    for m in _BODY_RE.finditer(text or ""):
+        t = (m.group(1) or "putty").lower()
+        t = re.sub(r"[\s-]", "", t)
+        out.add({"extralight": "xlight", "mono": "monophase"}.get(t, t))
+    return out
 
 
 def pack_from_page(c: PriceCandidate) -> Optional[int]:
@@ -135,6 +173,32 @@ _WRONG_FORM = ("applier", "dispensing gun", "capsule gun", "applicator gun")
 # page is a generic substitute, not the same product.
 _HOUSE_BRANDS = ("criterion", "acclean", "maxima")
 
+# Model-suffix guard: product-line modifiers that distinguish different SKUs
+# within the same family ("Microbrush X" vs "Microbrush Plus", "OptiBond FL"
+# vs "OptiBond Solo Plus").  Fire only when BOTH sides carry a suffix.
+_MODEL_SUFFIXES = (
+    "plus", "ultra", "pro", "max", "mini", "lite", "nano",
+    "premier", "select", "classic", "solo", "dual",
+    "extra", "xtra", "xt", "xl", "xs",
+)
+_MODEL_SUFFIX_RE = re.compile(
+    r"\b(" + "|".join(re.escape(s) for s in _MODEL_SUFFIXES) + r")\b", re.I)
+
+def _model_suffix_in(text: str) -> set:
+    return {m.group(1).lower() for m in _MODEL_SUFFIX_RE.finditer(text or "")}
+
+# Single-letter model identifiers (e.g. "Microbrush X" — the "X" is the model).
+# Must be surrounded by whitespace or string boundary — letters within words
+# like "eXTRa" or "G2-BOND" must NOT match.
+_SINGLE_LETTER_MODEL_RE = re.compile(
+    r"(?:^|\s)([A-Z])(?:\s|$)")
+
+
+def _single_letter_model(text: str) -> set:
+    """Single uppercase letter that acts as a model identifier (Microbrush X)."""
+    return {m.group(1).upper() for m in _SINGLE_LETTER_MODEL_RE.finditer(text or "")
+            if m.group(1) not in ("A", "I")}   # skip articles
+
 
 # Out-of-stock / unavailable phrasing on a product page's buy box. A listing that
 # can't be bought is not a real price and must never headline as the recommended
@@ -144,6 +208,35 @@ _OOS_TEXT_RE = re.compile(
     r"out\s*of\s*stock|out-of-stock|sold\s*out|no\s+longer\s+available|"
     r"currently\s+unavailable|temporarily\s+unavailable|discontinued|"
     r"notify\s+me\s+when|back\s*in\s*stock", re.I)
+# A working buy affordance: the (ordered) variant IS purchasable even if some
+# OTHER size in a variant dropdown reads "Sold Out" (anson's Blue is sold out but
+# the ordered Red has an Add-to-Cart). A truly OOS page (carolinadental) replaces
+# the button with "Out of stock" and has NO add-to-cart text.
+_ADD_TO_CART_RE = re.compile(r"add\s+to\s+(?:cart|bag|basket)", re.I)
+
+
+_NAV_JUNK_RE = re.compile(
+    r"\s+(?:skip to content|close|become|menu|search|cart|home|login|sign in|"
+    r"add to cart|my account|wishlist)\b", re.I)
+
+
+def _name_from_content(md: str):
+    """Best-effort product name from the first substantial markdown content line,
+    for pages with no H1 / og-title (alpinedentalshop). Strips leading [[MARKER]]
+    lines, then trims trailing en-dash/pipe-separated SKU and nav fragments."""
+    if not md:
+        return None
+    body = re.sub(r"^(?:\[\[[A-Z]+\b.*?\]\]\s*\n)+", "", md)   # drop leading markers
+    for raw in body.splitlines():
+        line = raw.strip()
+        if len(line) < 5 or line.startswith(("!", "[", "*", ">", "|", "#")):
+            continue
+        line = _NAV_JUNK_RE.split(line)[0]           # cut at nav words
+        line = re.split(r"\s+[–—|]\s+", line)[0]      # cut at en-dash/pipe separators
+        line = line.strip(" –—-|·")
+        if 5 <= len(line) <= 140 and sum(ch.isalpha() for ch in line) >= 4:
+            return line
+    return None
 
 
 def _is_out_of_stock(c: PriceCandidate) -> bool:
@@ -152,16 +245,28 @@ def _is_out_of_stock(c: PriceCandidate) -> bool:
     the seller-table lock already excluded unavailable sellers (in_stock=True), so
     we don't text-scan those. For normal pages, a strong unavailability phrase in
     the buy-box head is a backstop."""
-    if getattr(c, "price_locked", False):
-        return getattr(c, "in_stock", None) is False
     if getattr(c, "in_stock", None) is False:
         return True
+    # Only AGGREGATOR seller-table locks (net32/supplyclinic) pre-excluded
+    # unavailable sellers, so their lock implies in-stock. A variant-matrix /
+    # structured lock on a SINGLE-product page (carolinadental Shopify) is NOT
+    # such a table — its page-level "Out of stock" is authoritative and MUST be
+    # text-scanned, else an out-of-stock listing headlines as the best price.
+    if getattr(c, "price_locked", False) and search._aggregator_domain(c.url):
+        return False
     # Scan a wide window (not just the first 1200 chars): on nav-heavy pages the
     # buy-box 'Out of stock' text sits well past a big category sidebar (dds). The
     # markdown is already cross-sell-stripped, so an unambiguous OOS phrase here is
     # the product's own status, not a related item's.
     head = (getattr(c, "scraped_markdown", None) or "")[:6000]
-    return bool(_OOS_TEXT_RE.search(head)) or bool(_OOS_TEXT_RE.search(getattr(c, "pack_condition", "") or ""))
+    oos = bool(_OOS_TEXT_RE.search(head)) or bool(_OOS_TEXT_RE.search(getattr(c, "pack_condition", "") or ""))
+    if not oos:
+        return False
+    # a present add-to-cart affordance means the ordered variant is buyable — the
+    # OOS phrase belongs to another size/variant, not the whole product
+    if _ADD_TO_CART_RE.search(head):
+        return False
+    return True
 
 
 def _flavor_in(text: str) -> Optional[str]:
@@ -188,6 +293,15 @@ def _colors_in(text: str) -> set:
         col = m.group(1).lower()
         out.add("gray" if col == "grey" else col)
     return out
+
+
+_SETSPEED_RE = re.compile(r"\b(rapid|fast|standard|regular)[\s-]+set\b", re.I)
+_SETSPEED_CANON = {"fast": "rapid", "regular": "standard"}
+
+
+def _setspeed_in(text: str) -> set:
+    return {_SETSPEED_CANON.get(m.group(1).lower(), m.group(1).lower())
+            for m in _SETSPEED_RE.finditer(text or "")}
 
 
 def variant_mismatch(item: OrderLineItem, c: PriceCandidate) -> Optional[str]:
@@ -229,6 +343,18 @@ def variant_mismatch(item: OrderLineItem, c: PriceCandidate) -> Optional[str]:
     cf_form = next((w for w in _WRONG_FORM if w in cand_name.lower()), None)
     if cf_form and not any(w in ordered_txt.lower() for w in _WRONG_FORM):
         return f"form mismatch (page is a '{cf_form}', order is the material)"
+    # ---- KIT vs REFILL: a "Bottle Kit" (primer+adhesive+applicators) is a
+    # fundamentally different SKU from a "Refill" (adhesive only). Fire only
+    # when one side says "kit" and the other says "refill" (or vice versa).
+    _o_lo, _c_lo = ordered_txt.lower(), cand_all.lower()
+    _o_kit = bool(re.search(r"\bkit\b", _o_lo))
+    _o_ref = bool(re.search(r"\brefill\b", _o_lo))
+    _c_kit = bool(re.search(r"\bkit\b", _c_lo))
+    _c_ref = bool(re.search(r"\brefill\b", _c_lo))
+    if _o_kit and not _o_ref and _c_ref and not _c_kit:
+        return "form mismatch (ordered Kit, page is a Refill)"
+    if _o_ref and not _o_kit and _c_kit and not _c_ref:
+        return "form mismatch (ordered Refill, page is a Kit)"
     # ---- HOUSE BRAND: a Henry Schein house brand (Criterion/Acclean/Maxima) is
     # sold by no one else, so a page that does NOT name that brand is a different
     # brand's generic substitute (net32 'Aurelia Sonic' gloves for a 'Criterion
@@ -236,6 +362,36 @@ def variant_mismatch(item: OrderLineItem, c: PriceCandidate) -> Optional[str]:
     ohb = next((h for h in _HOUSE_BRANDS if h in ordered_txt.lower()), None)
     if ohb and ohb not in cand_all.lower():
         return f"house-brand mismatch (ordered {ohb.title()}, page is a different brand)"
+    # ---- impression-material SET SPEED: "Rapid/Fast Set" and "Standard/Regular
+    # Set" are different formulations of the same line (Genie VPS Rapid vs the
+    # Standard-Set page the LLM rejected in words but scored all-Y criteria).
+    # Both sides must explicitly name a set speed; otherwise stay silent.
+    oss, css = _setspeed_in(ordered_txt), _setspeed_in(cand_all)
+    if oss and css and oss.isdisjoint(css):
+        return (f"set-speed mismatch (ordered {'/'.join(sorted(oss))} set, "
+                f"page {'/'.join(sorted(css))} set)")
+    # ---- model SUFFIX: "Microbrush X" vs "Microbrush Plus", "OptiBond FL"
+    # vs "OptiBond Solo Plus". Both sides must name a suffix; missing suffix on
+    # one side stays silent (the page may just omit it in the title).
+    osuf = _model_suffix_in(ordered_txt)
+    csuf = _model_suffix_in(cand_all)
+    if osuf and csuf and osuf.isdisjoint(csuf):
+        return (f"model-suffix mismatch (ordered {'/'.join(sorted(osuf))}, "
+                f"page {'/'.join(sorted(csuf))})")
+    # single-letter model identifiers ("Microbrush X" vs "Microbrush Plus")
+    olm = _single_letter_model(ordered_txt)
+    clm = _single_letter_model(cand_all)
+    if olm and clm and olm.isdisjoint(clm):
+        return (f"model-letter mismatch (ordered {'/'.join(sorted(olm))}, "
+                f"page {'/'.join(sorted(clm))})")
+    # cross-check: order has a single-letter model but page has a multi-char
+    # suffix instead (or vice versa) — "Microbrush X" vs "Microbrush Plus"
+    if olm and csuf and not osuf:
+        return (f"model mismatch (ordered {'/'.join(sorted(olm))}, "
+                f"page {'/'.join(sorted(csuf))})")
+    if osuf and clm and not olm:
+        return (f"model mismatch (ordered {'/'.join(sorted(osuf))}, "
+                f"page {'/'.join(sorted(clm))})")
     return None
 
 
@@ -310,6 +466,131 @@ def _effective_exact(item: OrderLineItem, c: PriceCandidate) -> bool:
 
 # --------------------------------------------------------------- pipeline ---
 
+# eBay rule (client decision): only brand-new, fixed-price (Buy It Now) listings
+# qualify for the 🅔 eBay row. Used/open-box/refurb/auction listings are rejected
+# here BEFORE AI validation, so they cost no tokens and render as "not on eBay".
+_EBAY_BAD_COND_RE = re.compile(
+    r"pre-?owned|\bused\b|refurbished|open\s*box|for\s+parts|new\s*[\(–-]\s*other"
+    r"|damaged|missing\s+components", re.I)
+_EBAY_NEW_RE = re.compile(r"condition\s*[:\-—]?\s*\**\s*(brand\s+)?new\b|\bbrand\s+new\b", re.I)
+_EBAY_AUCTION_RE = re.compile(r"\b\d+\s+bids?\b|place\s+bid|starting\s+bid", re.I)
+_EBAY_BIN_RE = re.compile(r"buy\s+it\s+now", re.I)
+
+
+def _serp_marketplace_match(item: OrderLineItem, c: PriceCandidate) -> None:
+    """Deterministic title-based match for a SerpAPI marketplace candidate (price +
+    title already known, no page scrape). Sets scraped_product_name, pack_qty and
+    the four criteria from the listing TITLE so the report's marketplace-eligibility
+    gate can judge it without a scrape (Amazon's bot wall makes scraping useless)."""
+    # use the listing title OR the scraped/structured product name — a SEEDED URL
+    # often has an empty title, but the scrape/SerpAPI-product set scraped_product_
+    # name (GUM 12-pack: title '', scraped_product_name "GUM Technique Deep Clean…").
+    title = c.title or c.scraped_product_name or getattr(c, "structured_name", "") or ""
+    if not c.scraped_product_name:
+        c.scraped_product_name = title
+    tl = title.lower()
+    # pack from the title OR URL. Try the explicit MULTI-pack forms FIRST ("Pack of
+    # 12", "12-Pack") — Walmart slugs like "1-Count-Pack-of-12" would otherwise be
+    # misread as 1 by the "N count" form. Then N/Box, then N capsules/count.
+    hay = f"{title} {c.url or ''}"
+    pm = (re.search(r"pack[\s-]+of[\s-]+(\d{1,5})", hay, re.I)
+          or re.search(r"\b(\d{1,5})[\s-]*pack\b", hay, re.I)
+          or _HEAD_PACK_RE.search(hay)
+          or re.search(r"\b(\d{1,5})\s*(?:capsules?|count|ct|pcs|pieces)\b", hay, re.I))
+    if c.pack_qty is None and pm:
+        # _HEAD_PACK_RE has TWO alternation groups (pack-keyword form vs "N x qty
+        # unit" form) — take whichever matched; int(None) would otherwise crash.
+        g = next((x for x in pm.groups() if x), None)
+        try:
+            c.pack_qty = int(g) if g else None
+        except (ValueError, TypeError):
+            pass
+    # name-token overlap. KEEP short tokens (len≥2): "ii", "lc", "a3" are the very
+    # tokens that separate "Fuji II LC" from "Fuji Triage" / "Fuji IX GP" — filter
+    # only 1-char noise. Include the variant/shade so a wrong shade fails overlap.
+    ref = f"{item.product_name or item.description or ''} {item.variant or ''}".lower()
+    bt = set(re.findall(r"[a-z0-9.]+", (item.brand or "").lower()))
+    toks = [w for w in re.findall(r"[a-z0-9.]+", ref) if len(w) >= 2 and w not in bt]
+    name_ok = bool(toks) and sum(1 for w in toks if w in tl) / len(toks) >= 0.6
+    is_seed = getattr(c, "_seed", False)
+    # A SEEDED URL is the operator asserting "this IS the match" — the amazon/ebay/
+    # walmart LINK was hand-picked, so trust the product IDENTITY fully (brand,
+    # name AND variant: the ordered Soft toothbrush vs the seeded 'Sensitive'
+    # Amazon listing, or tray-cover White/Lavender vs Aqua). It still must clear
+    # PRICE SANITY and pack (below) — a seed can't force an implausible price.
+    vm = None if is_seed else (variant_mismatch(item, c) if name_ok else None)
+    if is_seed:
+        _vm_note = variant_mismatch(item, c)
+        if _vm_note:
+            c.notes = ((c.notes + " · ") if c.notes else "") + (
+                f"NOTE — {_vm_note}; seeded as a match, verify before ordering")
+    crit = {
+        "brand_match": bool(is_seed or not item.brand
+                            or (item.brand or "").lower().split()[0] in tl),
+        "name_match": bool(is_seed or (name_ok and not vm)),
+        "size_form_match": bool(is_seed) or (not item.size_form) or any(
+            s in tl for s in re.findall(r"[a-z0-9.]+", (item.size_form or "").lower()) if len(s) > 2),
+        # seeded: if a pack couldn't be read from the title/URL, trust the operator
+        "pack_match": bool((is_seed and not c.pack_qty)
+                           or (item.pack_qty and c.pack_qty and int(c.pack_qty) == int(item.pack_qty))),
+    }
+    # SHADE CONFIRMATION: when the order specifies a dental shade (A3, A3.5, B1…),
+    # a marketplace listing whose title shows NO shade at all cannot be confirmed
+    # as that shade — a shadeless "Fuji II Gold Label" $180 listing was winning
+    # BOTH the A3 and A3.5 rows. Require the shade present (seeds exempt — vouched).
+    shade_gap = ""
+    if not is_seed:
+        osh = re.search(r"\b[ab]\d(?:\.\d)?\b", (item.variant or "").lower())
+        if osh and not re.search(r"\b[ab]\d(?:\.\d)?\b", tl):
+            shade_gap = osh.group(0).upper()
+            crit["name_match"] = False
+    c.criteria = crit
+    if vm and not is_seed:
+        c.variant_conflict = True
+    ok = is_seed or (name_ok and not vm and not shade_gap)
+    c.match_type = "approximate" if ok else "rejected"
+    if not is_seed:
+        if shade_gap:
+            c.rejected_reason = f"shade {shade_gap} not confirmed — listing shows no shade"
+        elif not name_ok:
+            c.rejected_reason = f"SerpAPI listing '{title[:50]}' does not match the ordered product"
+        elif vm:
+            c.rejected_reason = f"variant mismatch — {vm}"
+    c.notes = ((c.notes + " · ") if c.notes else "") + (
+        f"price ${c.price:,.2f} + title via SerpAPI {c.marketplace} engine (direct, no scrape)"
+        if c.price else "SerpAPI listing (no price)")
+
+
+def _ebay_condition_gate(c) -> None:
+    # SerpAPI eBay engine gives the condition directly — use it (no markdown needed)
+    _spc = getattr(c, "_ebay_condition", "") or ""
+    if _spc:
+        if _EBAY_BAD_COND_RE.search(_spc):
+            c.match_type = "rejected"
+            c.rejected_reason = ("eBay listing is not new condition (used/open-box/refurb) "
+                                 "— excluded by the new-only rule")
+        elif not _EBAY_NEW_RE.search(_spc) and "new" not in _spc.lower():
+            c.match_type = "rejected"
+            c.rejected_reason = ("eBay listing condition could not be confirmed as New "
+                                 "— excluded by the new-only rule")
+        return
+    md = (c.scraped_markdown or "")
+    if not md:      # page never read — leave as-is; the picker requires page proof anyway
+        return
+    hay = md + " " + (c.title or "")
+    if _EBAY_BAD_COND_RE.search(hay):
+        c.match_type = "rejected"
+        c.rejected_reason = ("eBay listing is not new condition (used/open-box/refurb) "
+                             "— excluded by the new-only rule")
+    elif not _EBAY_NEW_RE.search(hay):
+        c.match_type = "rejected"
+        c.rejected_reason = ("eBay listing condition could not be confirmed as New "
+                             "— excluded by the new-only rule")
+    elif _EBAY_AUCTION_RE.search(md) and not _EBAY_BIN_RE.search(md):
+        c.match_type = "rejected"
+        c.rejected_reason = "eBay auction listing (no Buy It Now price) — excluded"
+
+
 def process_item(item: OrderLineItem, max_verify: int = 8) -> ItemResult:
     sku = item.schein_sku
     result = ItemResult(item=item)
@@ -363,6 +644,70 @@ def process_item(item: OrderLineItem, max_verify: int = 8) -> ItemResult:
     exacts_found = 0
     verified_ok = 0
     paid_n = 0
+
+    # ---------------- MARKETPLACE SWEEP (Amazon / Walmart / eBay rows) ---------
+    # Dedicated candidates for the per-item 🅐/🅦/🅔 report rows. They ride the
+    # SAME extraction/validation/guard path as regular candidates (appended to
+    # `verified` before the AI call below) but are split out into
+    # result.marketplace_candidates at the end, so they can never claim a regular
+    # option slot, become best_exact, or leak into the alternate sheet. Runs
+    # BEFORE the main scrape loop so its few paid scrapes are never starved by a
+    # scrape-hungry item when the per-run Firecrawl budget runs down.
+    if search.MARKETPLACE_ENABLED:
+        # PER-MARKETPLACE paid budget (not shared): a heavy Amazon page must never
+        # starve the eBay lookup of its scrape slots.
+        mkt_dom_cap = int(_os.environ.get("MKT_SCRAPE_TOP", "2"))
+        mkt_paid_total = 0
+        for dom in search.MARKETPLACE_DOMAINS:
+            try:
+                mcands = search.marketplace_search(item, dom)
+            except Exception:
+                log.exception("SKU %s — marketplace search crashed for %s", sku, dom)
+                continue
+            dom_paid = 0
+            for mi, c in enumerate(mcands[:6]):
+                if getattr(c, "_serp_direct", False):
+                    # SerpAPI gave price + title directly — match on the title, no
+                    # scrape (Amazon's bot wall makes scraping pointless anyway).
+                    _serp_marketplace_match(item, c)
+                elif mi < mkt_dom_cap:
+                    c._ordered_variant = item.variant or ""
+                    c._order_mpn = item.mpn or ""
+                    c._order_sku = item.schein_sku or ""
+                    c._order_sizeform = item.size_form or ""
+                    c._order_desc = item.description or ""
+                    c = search.firecrawl_verify(c, sku=sku,
+                                                allow_paid=(dom_paid < mkt_dom_cap))
+                    if getattr(c, "_paid_scrape", False):
+                        dom_paid += 1
+                    # SEEDED marketplace URL = operator "this IS the match". Get a
+                    # price (SerpAPI product lookup if the scrape's JS-price failed),
+                    # then judge by DETERMINISTIC TITLE MATCH — not the LLM, which
+                    # over-rejects (marked the correct GUM 12-pack name_match=N).
+                    if getattr(c, "_seed", False):
+                        if c.price is None:
+                            _p, _t, _cond = search.serpapi_product(c.url, dom)
+                            if _p:
+                                c.price = _p
+                                c.price_structured = True
+                                if not c.title:
+                                    c.title = _t
+                                if _cond and c.marketplace == "ebay":
+                                    c._ebay_condition = _cond
+                        if c.price is not None:
+                            c.match_type = "approximate"   # reset LLM verdict
+                            c.rejected_reason = None
+                            c.variant_conflict = False
+                            _serp_marketplace_match(item, c)
+                else:
+                    c.notes = "marketplace hit not scraped (lower-ranked than the top hits)"
+                if c.marketplace == "ebay":
+                    _ebay_condition_gate(c)
+                verified.append(c)
+            mkt_paid_total += dom_paid
+        if mkt_paid_total:
+            log.info("SKU %s — marketplace sweep: %d paid scrape(s) spent", sku, mkt_paid_total)
+
     for idx, c in enumerate(cands):
         if idx >= free_max:
             c.notes = c.notes or "not scraped — per-item coverage cap reached"
@@ -387,6 +732,82 @@ def process_item(item: OrderLineItem, max_verify: int = 8) -> ItemResult:
     # pages unprocessed, pull their price straight from the markdown (regex,
     # flagged UNVERIFIED) so the report shows a price instead of nothing.
     ai.manual_extract_fallback(item, verified)
+
+    # PRICE-RANGE FALLBACK: a WooCommerce variable product (afteractionmedical's
+    # Criterion gloves) shows only a range "$14.99–$20.99" — no single price — so
+    # the extractor leaves price None. The ordered variant (Small/Medium 300-box)
+    # is the cheapest, so the LOW end IS its price. When a candidate has NO price
+    # but its page name matches the order, use the range low, flagged unreliable
+    # (shows as an option with ⚠, never headlines) so a genuine cheap match isn't
+    # silently dropped.
+    for c in verified:
+        # allow rejected candidates too: the LLM often marks a variable-product
+        # page 'rejected' precisely BECAUSE it saw only a range and no single price
+        # (afteraction's Small glove) — the name-match guard below still protects us.
+        if c.price is not None:
+            continue
+        if "login" in (c.rejected_reason or "").lower():
+            continue                    # a genuine login gate is not a price range
+        crit = c.criteria or {}
+        if not (crit.get("name_match") and _brand_ok(item, c)):
+            continue
+        md = getattr(c, "scraped_markdown", None) or ""
+        rm = re.search(r"\$\s?([\d,]+\.\d{2})\s*[–—-]\s*\$?\s?([\d,]+\.\d{2})", md)
+        if not rm:
+            continue
+        try:
+            lo = float(rm.group(1).replace(",", "")); hi = float(rm.group(2).replace(",", ""))
+        except ValueError:
+            continue
+        if not (lo < hi and price_sane(item, c.model_copy(update={"price": lo}))):
+            continue
+        c.price = lo
+        c.price_unreliable = True
+        if c.match_type == "rejected":
+            c.match_type = "approximate"
+        c.notes = ((c.notes + " · ") if c.notes else "") + (
+            f"PRICE RANGE ${lo:,.2f}–${hi:,.2f} on page (variable product); low end "
+            f"shown as the ordered variant's likely price — VERIFY exact variant on page")
+
+    # LOGIN FALSE-GATE RESCUE: a single-offer STRUCTURED price is public page
+    # data — a genuinely login-walled price never appears in the page's public
+    # JSON-LD/og markup. Same for an aggregator-LOCKED price parsed from the
+    # public seller table (supplyclinic pages carry an "account pricing" prompt
+    # the LLM misreads as a gate). When the ONLY thing keeping a candidate out
+    # is a login-pricing rejection (alpinedentalshop's public $495.95 Genie kit
+    # was dropped this way), restore it as an UNVERIFIED candidate; every normal
+    # gate (price sanity, pack, variant, options ranking) still applies, so it
+    # can surface as a labelled option but never headline unvalidated.
+    for c in verified:
+        if ((getattr(c, "price_structured", False) or getattr(c, "price_locked", False))
+                and c.price
+                and "login" in (c.rejected_reason or "").lower()):
+            if c.match_type == "rejected":
+                c.match_type = "unverified"
+                c.notes = ((c.notes + " · ") if c.notes else "") + (
+                    "login-pricing rejection overridden — the price is the page's "
+                    "own public structured/table data; match criteria UNVERIFIED, "
+                    "review before use")
+            else:
+                # verdict survived; only the gate flag was wrong (a locked
+                # seller-table price with an "account pricing" prompt misread)
+                c.notes = ((c.notes + " · ") if c.notes else "") + (
+                    "login-pricing flag cleared — price is from the page's public "
+                    "seller table/structured data")
+            c.rejected_reason = None
+            if not c.scraped_product_name:
+                _md0 = getattr(c, "scraped_markdown", None) or ""
+                _hm0 = re.search(r"(?m)^#\s+(.{10,200})$", _md0)
+                # heading → structured name → first content line → listing title.
+                # alpinedentalshop's $495.95 Genie had no H1/structured name/title,
+                # but its product name IS the first markdown content line ("Genie
+                # Vps Heavy Body - 4 x 380ml Cartridge – 78830 Skip to content …");
+                # take it and trim the trailing en-dash/pipe nav junk.
+                c.scraped_product_name = (
+                    (_hm0.group(1).strip() if _hm0 else None)
+                    or getattr(c, "structured_name", None)
+                    or _name_from_content(_md0)
+                    or (c.title or None))
 
     # deterministic demotions run AFTER the combined call (price/pack populated).
     # These OVERRIDE the AI verdict: a price-insane or volume-mismatched candidate
@@ -445,6 +866,16 @@ def process_item(item: OrderLineItem, max_verify: int = 8) -> ItemResult:
         if not getattr(c, "variant_conflict", False):
             vm = variant_mismatch(item, c)
             if vm:
+                # A manually SEEDED URL (seed_urls.txt) is an operator assertion
+                # "this IS the match" — for a COLOR-only difference on such a
+                # listing (Henry Schein tray covers White/Lavender vs ordered Aqua,
+                # a cosmetic difference on an identical product) keep it eligible,
+                # just annotate the color. Every other mismatch still hard-blocks.
+                if getattr(c, "_seed", False) and "color mismatch" in vm.lower():
+                    c.notes = ((c.notes + " · ") if c.notes else "") + (
+                        f"COLOR NOTE — {vm}; seeded as a match (same product, "
+                        f"different color) — verify color is acceptable")
+                    continue
                 c.variant_unverified = True
                 c.variant_conflict = True   # wrong color/shade/size/flavor/brand → keep out of price_match
                 if c.match_type == "exact":
@@ -533,6 +964,148 @@ def process_item(item: OrderLineItem, max_verify: int = 8) -> ItemResult:
             log.info("SKU %s — %s locked-price token-confirmed → price_match-eligible",
                      sku, c.source_site)
 
+    # STRUCTURED-HEADING CONFIRMATION: the scraped page's OWN product heading
+    # (markdown H1, else the og/structured title) is page-level identity evidence
+    # the free model routinely ignores — on Walmart variant pages it read the URL
+    # slug instead (slug "250-Box-X-Large" vs an H1 of "Small, Ice Blue, 300/Box"),
+    # and it rejects nav-bloated stores (frontierdental) whose buy box never
+    # reaches the capped markdown even though the structured price + og:title
+    # identify the product exactly. When the heading token-matches the item AND
+    # states an explicit pack count equal to the ordered pack, confirm
+    # name/size/pack and clear a content-based rejection. Deterministic conflicts
+    # stay authoritative: a wrong variant read from the heading, a different
+    # heading pack, or login/sanity/OOS rejections all skip confirmation, and
+    # price-trust flags are untouched (an unreliable price still can't headline).
+    for c in verified:
+        if c.price is None or getattr(c, "variant_conflict", False):
+            continue
+        crit = dict(c.criteria or {})
+        if crit.get("name_match") and crit.get("size_form_match") and crit.get("pack_match"):
+            continue
+        md = getattr(c, "scraped_markdown", None) or ""
+        hm = re.search(r"(?m)^#\s+(.{10,200})$", md)
+        head = (hm.group(1).strip() if hm else None) or getattr(c, "structured_name", None)
+        if not head or not item.pack_qty:
+            continue
+        pm = _HEAD_PACK_RE.search(head)
+        if not pm or int(pm.group(1) or pm.group(2)) != int(item.pack_qty):
+            continue                      # heading pack absent or different — no confirmation
+        # overlap on PRODUCT tokens only — brand words ("Henry Schein") must not
+        # carry a wrong product past the bar (a house-brand Cotton BALLS listing
+        # scored 0.6 on brand tokens alone against a Cotton ROLLS order)
+        # product_name AND description together — the AI's product_name alone can
+        # be too short to clear the bar ("S3+ Face Masks" → 2 usable tokens)
+        ref = f"{item.product_name or ''} {item.description or ''}".lower()
+        brand_toks = set(re.findall(r"[a-z0-9.]+", (item.brand or "").lower()))
+        toks = [w for w in re.findall(r"[a-z0-9.]+", ref)
+                if len(w) > 2 and w not in brand_toks]
+        page = head.lower()
+        # plural-tolerant containment: "Masks" must count against a heading that
+        # says "Mask" (frontier's S3 Plus Mask page) and vice versa
+        def _tok_in(w):
+            return (w in page or (w.endswith("s") and w[:-1] in page)
+                    or (w + "s") in page)
+        if not toks or sum(1 for w in toks if _tok_in(w)) / len(toks) < 0.6:
+            continue
+        # every digit-bearing token is a model/variant identifier and must appear
+        # (normalized) in the heading — kills 841G-014 posing as the 841G-012 order.
+        # Same exemptions as the description-sourced gate below: dimension
+        # fragments (6"x6.75") and tokens too short after normalization ("5.0")
+        # are not identifiers.
+        hnorm = re.sub(r"[^a-z0-9]", "", page)
+
+        def _is_ident(w):
+            wn = re.sub(r"[^a-z0-9]", "", w)
+            if len(wn) < 3 or not any(ch.isdigit() for ch in wn):
+                return False
+            letters = {ch for ch in wn if ch.isalpha()}
+            return not (letters and letters <= {"x"})
+        if any(re.sub(r"[^a-z0-9]", "", w) not in hnorm
+               for w in toks if _is_ident(w)):
+            continue
+        # explicit garment/glove size conflict (X-Small heading vs an ordered S)
+        if _size_ladder(f"{item.variant or ''} {item.description or ''}") and \
+           _size_ladder(head) and \
+           _size_ladder(f"{item.variant or ''} {item.description or ''}").isdisjoint(_size_ladder(head)):
+            continue
+        # model/variant identifier tokens (letters+digits: 841g, 012, 9742m, n300,
+        # a3.5) from the ORDER's own description/variant must appear in the heading
+        # or the URL — a same-family listing one model off (841G-014 vs the ordered
+        # 841G-012, a 9742M polisher vs an unnumbered "Flame Fine" page) can never
+        # be confirmed. Dimension fragments (6"x6.75") are exempt.
+        hay = re.sub(r"[^a-z0-9]", "", (head + " " + (c.url or "")).lower())
+        _id_block = False
+        for w in re.findall(r"[a-z0-9.]+", f"{item.description or ''} {item.variant or ''}".lower()):
+            wn = re.sub(r"[^a-z0-9]", "", w)
+            if len(wn) < 3 or not any(ch.isdigit() for ch in wn):
+                continue
+            letters = {ch for ch in wn if ch.isalpha()}
+            if letters and letters <= {"x"}:
+                continue
+            if wn not in hay:
+                _id_block = True
+                break
+        if _id_block:
+            continue
+        # impression-material viscosity conflict (an ordered XLight Body vs a
+        # heading selling Light Body is a different product, not a match)
+        if _body_ladder(f"{item.variant or ''} {item.description or ''}") and _body_ladder(head) and \
+           _body_ladder(f"{item.variant or ''} {item.description or ''}").isdisjoint(_body_ladder(head)):
+            continue
+        # variant check against the heading ONLY (the URL slug may carry another
+        # variant's words — exactly the misread this pass exists to fix)
+        probe = c.model_copy(update={"scraped_product_name": head, "title": "",
+                                     "url": "", "scraped_variant": None})
+        if variant_mismatch(item, probe):
+            continue
+        # BRAND / PRODUCT-NAME gate: when the order has a known brand AND a
+        # distinctive product name (e.g. brand="Kerr", product_name="OptiBond
+        # eXTRa Universal"), require at least ONE distinctive anchor token from
+        # the product_name to appear in the heading. This blocks "G2-BOND
+        # Universal" (a GC product) from heading-confirming as "OptiBond eXTRa
+        # Universal" (a Kerr product) — the two share "Universal" but neither
+        # "OptiBond" nor "eXTRa" appears.  Skip when brand is absent (generic
+        # items) or when the product_name is too short to have a distinctive
+        # anchor (≤1 usable token after stripping brand and pack words).
+        if item.brand and getattr(item, "product_name", None):
+            _pn = (item.product_name or "").lower()
+            _bt = set(re.findall(r"[a-z0-9.]+", (item.brand or "").lower()))
+            _pack_words = {"bx", "pk", "bg", "ea", "bt", "box", "pack", "bag",
+                           "each", "bottle", "refill", "kit", "syringe"}
+            _generic_words = {"universal", "dental", "adhesive", "bond",
+                              "bonding", "cement", "material", "composite",
+                              "impression", "tray", "mixing", "tips", "medium",
+                              "fine", "light", "heavy", "body", "clear",
+                              "white", "opaque", "anterior", "posterior"}
+            _anchors = [w for w in re.findall(r"[a-z0-9.]+", _pn)
+                        if len(w) > 1 and w not in _bt and w not in _pack_words
+                        and w not in _generic_words
+                        and w not in ("the", "and", "for", "with")]
+            if len(_anchors) >= 1 and not any(_tok_in(a) for a in _anchors):
+                continue
+        if not c.scraped_product_name:
+            c.scraped_product_name = head
+        crit.update({"name_match": True, "size_form_match": True, "pack_match": True})
+        if (item.brand or "").lower() in page:
+            crit["brand_match"] = True
+        c.criteria = crit
+        if c.pack_qty is None:
+            c.pack_qty = int(pm.group(1) or pm.group(2))
+        reason = (c.rejected_reason or "").lower()
+        # A LOGIN rejection is overridden ONLY when the price came from the page's
+        # own public structured data (JSON-LD/og) — a genuinely gated page doesn't
+        # publish its price there; frontierdental shows a "sign in for special
+        # pricing" banner NEXT TO a public price and was wrongly dropped for it.
+        login_ok = "login" not in reason or getattr(c, "price_structured", False)
+        if c.match_type == "rejected" and login_ok and not any(
+                k in reason for k in ("sanity", "page not found", "out of stock")):
+            c.match_type = "approximate"
+            c.notes = ((c.notes + " · ") if c.notes else "") + (
+                f"page heading confirms product identity ({head[:80]})")
+            c.rejected_reason = None
+        log.info("SKU %s — %s heading-confirmed (%r, pack %s) → price_match-eligible",
+                 sku, c.source_site, head[:60], item.pack_qty)
+
     # MPN learning/validation from the real pages (confirms a seed MPN, learns new
     # ones, or overrides a wrong seed by consensus) — persisted for the next run.
     try:
@@ -540,7 +1113,8 @@ def process_item(item: OrderLineItem, max_verify: int = 8) -> ItemResult:
     except Exception:
         log.debug("SKU %s — MPN page-consensus skipped", sku)
 
-    result.candidates.extend(verified)
+    result.candidates.extend(c for c in verified if not getattr(c, "marketplace", None))
+    result.marketplace_candidates.extend(c for c in verified if getattr(c, "marketplace", None))
 
     # INTRA-ITEM OUTLIER GUARD: a price far below this item's other page-verified
     # candidates is almost always a wrong extraction — a related/cross-sell item,
@@ -555,9 +1129,21 @@ def process_item(item: OrderLineItem, max_verify: int = 8) -> ItemResult:
     if len(priced) >= 3:
         mid = priced[len(priced) // 2]          # median of verified prices
         for c in verified:
+            # A page's own single-offer STRUCTURED price with the ordered pack
+            # confirmed on-page is a declared price, not an extraction guess —
+            # exempt it like locked prices. (Walmart's $19.95/300-box gloves were
+            # flagged because a $210 CASE listing dragged the item median up.)
+            _declared = (getattr(c, "price_structured", False) and item.pack_qty
+                         and c.pack_qty and int(c.pack_qty) == int(item.pack_qty))
+            # A deterministic "Was $X / Now $Y" sale price (carries original_price)
+            # is genuinely low on purpose — the page states it — so it must not be
+            # flagged as a suspicious outlier (dentalcity cotton rolls $13.99 sale).
+            if getattr(c, "original_price", None):
+                _declared = True
             if (c.price and c.price > 0 and c.scraped_product_name is not None
                     and not getattr(c, "price_unreliable", False)
                     and not getattr(c, "price_locked", False)
+                    and not _declared
                     and c.price < out_ratio * mid):
                 c.price_unreliable = True
                 c.notes = ((c.notes + " · ") if c.notes else "") + (
@@ -657,6 +1243,7 @@ def process_item(item: OrderLineItem, max_verify: int = 8) -> ItemResult:
     # their condition shown (PRD 4.5 / 4.6). Out-of-stock listings are excluded.
     exacts = [c for c in verified
               if c.match_type == "exact" and _effective_exact(item, c)
+              and not getattr(c, "marketplace", None)   # 🅐/🅦/🅔 rows never headline
               and pack_compatible(item, c) is not False
               and not getattr(c, "price_unreliable", False)
               and not getattr(c, "out_of_stock", False)
@@ -706,7 +1293,7 @@ def load_mpn_table(config_dir: Path) -> dict:
     table: dict = {}
     if not f.exists():
         return table
-    for line in f.read_text().splitlines():
+    for line in f.read_text(encoding="utf-8").splitlines():
         line = line.split("#")[0].strip()          # trailing # comment
         if not line:
             continue
@@ -847,7 +1434,7 @@ def load_equivalency_table(config_dir: Path) -> List[EquivalencyEntry]:
     entries: List[EquivalencyEntry] = []
     if not f.exists():
         return entries
-    for line in f.read_text().splitlines():
+    for line in f.read_text(encoding="utf-8").splitlines():
         line = line.split("#")[0].strip()
         if not line:
             continue

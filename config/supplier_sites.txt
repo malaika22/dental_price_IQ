@@ -1,7 +1,4 @@
-# Trusted dental supplier domains. For EVERY item, the system runs a targeted
-# site:<domain> search so these suppliers are checked directly even when they
-# don't appear in generic SerpAPI results. Client-editable — add/remove freely,
-# one domain per line, no code changes required. Lines starting with # ignored.
+# Auto-synced from Admin → Supplier Sources. Edit via the dashboard.
 net32.com
 curio.dental
 surgimac.com
@@ -22,21 +19,12 @@ usdentaldepot.com
 dentalwholesaledirect.com
 skydentalsupply.com
 pstshop.com
-darbydental.com
 shop.benco.com
 pattersondental.com
 orthazone.com
 thedentalmarket.net
 amtouch.com
 dentaldash.shop
-
-# ---------------------------------------------------------------------------
-# Added from manual-search coverage analysis (US dental/medical suppliers that
-# carried the lowest price on real orders but were not previously listed).
-# Deliberately EXCLUDES henryschein.com (the target supplier), non-US/foreign
-# storefronts (.ca/.com.au/.cz/Qatar — they price in non-USD and break the
-# comparison), and non-dental/junk domains.
-# ---------------------------------------------------------------------------
 chasedentalsupply.com
 topqualitygloves.com
 newarkdentalpemco.com
@@ -80,3 +68,10 @@ acesouthern.com
 dhpsupply.com
 midwestdental.com
 mvpdentalsupply.com
+cts-dental.com
+ciamedical.com
+primedentalsupply.com
+ddssupply.com
+purelifedental.com
+dcdental.com
+padentalsupplies.com

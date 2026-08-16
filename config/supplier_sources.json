@@ -1,0 +1,570 @@
+[
+  {
+    "id": "net32.com",
+    "domain": "net32.com",
+    "label": "net32.com",
+    "enabled": true,
+    "type": "aggregator",
+    "priority": 1
+  },
+  {
+    "id": "curio.dental",
+    "domain": "curio.dental",
+    "label": "curio.dental",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 2
+  },
+  {
+    "id": "surgimac.com",
+    "domain": "surgimac.com",
+    "label": "surgimac.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 3
+  },
+  {
+    "id": "frontierdental.com",
+    "domain": "frontierdental.com",
+    "label": "frontierdental.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 4
+  },
+  {
+    "id": "myddssupply.com",
+    "domain": "myddssupply.com",
+    "label": "myddssupply.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 5
+  },
+  {
+    "id": "pearsondental.com",
+    "domain": "pearsondental.com",
+    "label": "pearsondental.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 6
+  },
+  {
+    "id": "optimusdentalsupply.com",
+    "domain": "optimusdentalsupply.com",
+    "label": "optimusdentalsupply.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 7
+  },
+  {
+    "id": "ddsdentalsupplies.com",
+    "domain": "ddsdentalsupplies.com",
+    "label": "ddsdentalsupplies.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 8
+  },
+  {
+    "id": "crazydentalprices.com",
+    "domain": "crazydentalprices.com",
+    "label": "crazydentalprices.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 9
+  },
+  {
+    "id": "supplyclinic.com",
+    "domain": "supplyclinic.com",
+    "label": "supplyclinic.com",
+    "enabled": true,
+    "type": "aggregator",
+    "priority": 10
+  },
+  {
+    "id": "dentalcity.com",
+    "domain": "dentalcity.com",
+    "label": "dentalcity.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 11
+  },
+  {
+    "id": "safcodental.com",
+    "domain": "safcodental.com",
+    "label": "safcodental.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 12
+  },
+  {
+    "id": "tdsc.com",
+    "domain": "tdsc.com",
+    "label": "tdsc.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 13
+  },
+  {
+    "id": "scottsdental.com",
+    "domain": "scottsdental.com",
+    "label": "scottsdental.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 14
+  },
+  {
+    "id": "practicon.com",
+    "domain": "practicon.com",
+    "label": "practicon.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 15
+  },
+  {
+    "id": "benco.com",
+    "domain": "benco.com",
+    "label": "benco.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 16
+  },
+  {
+    "id": "usdentaldepot.com",
+    "domain": "usdentaldepot.com",
+    "label": "usdentaldepot.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 17
+  },
+  {
+    "id": "dentalwholesaledirect.com",
+    "domain": "dentalwholesaledirect.com",
+    "label": "dentalwholesaledirect.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 18
+  },
+  {
+    "id": "skydentalsupply.com",
+    "domain": "skydentalsupply.com",
+    "label": "skydentalsupply.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 19
+  },
+  {
+    "id": "pstshop.com",
+    "domain": "pstshop.com",
+    "label": "pstshop.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 20
+  },
+  {
+    "id": "shop.benco.com",
+    "domain": "shop.benco.com",
+    "label": "shop.benco.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 21
+  },
+  {
+    "id": "pattersondental.com",
+    "domain": "pattersondental.com",
+    "label": "pattersondental.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 22
+  },
+  {
+    "id": "orthazone.com",
+    "domain": "orthazone.com",
+    "label": "orthazone.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 23
+  },
+  {
+    "id": "thedentalmarket.net",
+    "domain": "thedentalmarket.net",
+    "label": "thedentalmarket.net",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 24
+  },
+  {
+    "id": "amtouch.com",
+    "domain": "amtouch.com",
+    "label": "amtouch.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 25
+  },
+  {
+    "id": "dentaldash.shop",
+    "domain": "dentaldash.shop",
+    "label": "dentaldash.shop",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 26
+  },
+  {
+    "id": "chasedentalsupply.com",
+    "domain": "chasedentalsupply.com",
+    "label": "chasedentalsupply.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 27
+  },
+  {
+    "id": "topqualitygloves.com",
+    "domain": "topqualitygloves.com",
+    "label": "topqualitygloves.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 28
+  },
+  {
+    "id": "newarkdentalpemco.com",
+    "domain": "newarkdentalpemco.com",
+    "label": "newarkdentalpemco.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 29
+  },
+  {
+    "id": "pricenex.com",
+    "domain": "pricenex.com",
+    "label": "pricenex.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 30
+  },
+  {
+    "id": "afteractionmedical.com",
+    "domain": "afteractionmedical.com",
+    "label": "afteractionmedical.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 31
+  },
+  {
+    "id": "carolinadental.com",
+    "domain": "carolinadental.com",
+    "label": "carolinadental.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 32
+  },
+  {
+    "id": "allfordentist.com",
+    "domain": "allfordentist.com",
+    "label": "allfordentist.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 33
+  },
+  {
+    "id": "meisingerusa.com",
+    "domain": "meisingerusa.com",
+    "label": "meisingerusa.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 34
+  },
+  {
+    "id": "avtecdental.com",
+    "domain": "avtecdental.com",
+    "label": "avtecdental.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 35
+  },
+  {
+    "id": "ansondental.com",
+    "domain": "ansondental.com",
+    "label": "ansondental.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 36
+  },
+  {
+    "id": "supplydoc.com",
+    "domain": "supplydoc.com",
+    "label": "supplydoc.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 37
+  },
+  {
+    "id": "store.edgeendo.com",
+    "domain": "store.edgeendo.com",
+    "label": "store.edgeendo.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 38
+  },
+  {
+    "id": "allstardentalsupply.com",
+    "domain": "allstardentalsupply.com",
+    "label": "allstardentalsupply.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 39
+  },
+  {
+    "id": "acedentalsupplies.com",
+    "domain": "acedentalsupplies.com",
+    "label": "acedentalsupplies.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 40
+  },
+  {
+    "id": "medexsupply.com",
+    "domain": "medexsupply.com",
+    "label": "medexsupply.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 41
+  },
+  {
+    "id": "suprememed.com",
+    "domain": "suprememed.com",
+    "label": "suprememed.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 42
+  },
+  {
+    "id": "fireflysupply.com",
+    "domain": "fireflysupply.com",
+    "label": "fireflysupply.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 43
+  },
+  {
+    "id": "graylinemedical.com",
+    "domain": "graylinemedical.com",
+    "label": "graylinemedical.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 44
+  },
+  {
+    "id": "vitalitymedical.com",
+    "domain": "vitalitymedical.com",
+    "label": "vitalitymedical.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 45
+  },
+  {
+    "id": "usamedicalsurgical.com",
+    "domain": "usamedicalsurgical.com",
+    "label": "usamedicalsurgical.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 46
+  },
+  {
+    "id": "lexiconsupply.com",
+    "domain": "lexiconsupply.com",
+    "label": "lexiconsupply.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 47
+  },
+  {
+    "id": "alpinedentalshop.com",
+    "domain": "alpinedentalshop.com",
+    "label": "alpinedentalshop.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 48
+  },
+  {
+    "id": "mfidistribution.com",
+    "domain": "mfidistribution.com",
+    "label": "mfidistribution.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 49
+  },
+  {
+    "id": "honestmed.com",
+    "domain": "honestmed.com",
+    "label": "honestmed.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 50
+  },
+  {
+    "id": "goldburs.com",
+    "domain": "goldburs.com",
+    "label": "goldburs.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 51
+  },
+  {
+    "id": "jmudental.com",
+    "domain": "jmudental.com",
+    "label": "jmudental.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 52
+  },
+  {
+    "id": "straussdiamond.com",
+    "domain": "straussdiamond.com",
+    "label": "straussdiamond.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 53
+  },
+  {
+    "id": "globalburs.com",
+    "domain": "globalburs.com",
+    "label": "globalburs.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 54
+  },
+  {
+    "id": "franklindentalsupply.com",
+    "domain": "franklindentalsupply.com",
+    "label": "franklindentalsupply.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 55
+  },
+  {
+    "id": "wisdomdentalsupply.com",
+    "domain": "wisdomdentalsupply.com",
+    "label": "wisdomdentalsupply.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 56
+  },
+  {
+    "id": "medicalproductssupply.com",
+    "domain": "medicalproductssupply.com",
+    "label": "medicalproductssupply.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 57
+  },
+  {
+    "id": "asadentalsupplies.com",
+    "domain": "asadentalsupplies.com",
+    "label": "asadentalsupplies.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 58
+  },
+  {
+    "id": "zirc.com",
+    "domain": "zirc.com",
+    "label": "zirc.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 59
+  },
+  {
+    "id": "reliabledental.com",
+    "domain": "reliabledental.com",
+    "label": "reliabledental.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 60
+  },
+  {
+    "id": "quantumlabs.com",
+    "domain": "quantumlabs.com",
+    "label": "quantumlabs.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 61
+  },
+  {
+    "id": "dental.keystoneindustries.com",
+    "domain": "dental.keystoneindustries.com",
+    "label": "dental.keystoneindustries.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 62
+  },
+  {
+    "id": "steindentalsupplies.com",
+    "domain": "steindentalsupplies.com",
+    "label": "steindentalsupplies.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 63
+  },
+  {
+    "id": "royaldentalsupply.com",
+    "domain": "royaldentalsupply.com",
+    "label": "royaldentalsupply.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 64
+  },
+  {
+    "id": "tricountydental.com",
+    "domain": "tricountydental.com",
+    "label": "tricountydental.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 65
+  },
+  {
+    "id": "acesouthern.com",
+    "domain": "acesouthern.com",
+    "label": "acesouthern.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 66
+  },
+  {
+    "id": "dhpsupply.com",
+    "domain": "dhpsupply.com",
+    "label": "dhpsupply.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 67
+  },
+  {
+    "id": "midwestdental.com",
+    "domain": "midwestdental.com",
+    "label": "midwestdental.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 68
+  },
+  {
+    "id": "mvpdentalsupply.com",
+    "domain": "mvpdentalsupply.com",
+    "label": "mvpdentalsupply.com",
+    "enabled": true,
+    "type": "dental_supplier",
+    "priority": 69
+  },
+  {
+    "id": "amazon.com",
+    "domain": "amazon.com",
+    "label": "Amazon",
+    "enabled": true,
+    "type": "marketplace",
+    "priority": 900
+  },
+  {
+    "id": "walmart.com",
+    "domain": "walmart.com",
+    "label": "Walmart",
+    "enabled": true,
+    "type": "marketplace",
+    "priority": 910
+  }
+]

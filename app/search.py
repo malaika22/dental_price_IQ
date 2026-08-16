@@ -37,8 +37,21 @@ from .models import OrderLineItem, PriceCandidate
 log = logging.getLogger(__name__)
 fc_credit_log = logging.getLogger("firecrawl.credits")
 
-SERPAPI_KEY = os.environ.get("SERPAPI_API_KEY", "")
-FIRECRAWL_KEY = os.environ.get("FIRECRAWL_API_KEY", "")
+def _parse_keys(multi_env: str, single_env: str) -> list[str]:
+    raw = os.environ.get(multi_env, "")
+    if raw:
+        return [k.strip() for k in raw.split(",") if k.strip()]
+    single = os.environ.get(single_env, "")
+    return [single] if single else []
+
+_SERPAPI_KEYS = _parse_keys("SERPAPI_API_KEYS", "SERPAPI_API_KEY")
+_FIRECRAWL_KEYS = _parse_keys("FIRECRAWL_API_KEYS", "FIRECRAWL_API_KEY")
+
+_serp_key_state = {"idx": 0}
+_fc_key_state = {"idx": 0}
+
+SERPAPI_KEY = _SERPAPI_KEYS[0] if _SERPAPI_KEYS else ""
+FIRECRAWL_KEY = _FIRECRAWL_KEYS[0] if _FIRECRAWL_KEYS else ""
 FIRECRAWL_MAX_SCRAPES = int(os.environ.get("FIRECRAWL_MAX_SCRAPES_PER_RUN", "150"))
 _fc_state = {
     "exhausted": False,
@@ -50,28 +63,70 @@ _fc_state = {
 _fc_lock = threading.Lock()
 
 
+def _rotate_firecrawl_key() -> bool:
+    """Try the next Firecrawl key. Returns True if a fresh key is available."""
+    global FIRECRAWL_KEY
+    with _fc_lock:
+        nxt = _fc_key_state["idx"] + 1
+        if nxt >= len(_FIRECRAWL_KEYS):
+            return False
+        _fc_key_state["idx"] = nxt
+        FIRECRAWL_KEY = _FIRECRAWL_KEYS[nxt]
+        _fc_state["exhausted"] = False
+        _fc_state["exhausted_reason"] = None
+    fc_credit_log.info(
+        "========== FIRECRAWL KEY ROTATED → key %d/%d ==========",
+        nxt + 1, len(_FIRECRAWL_KEYS))
+    return True
+
+
 def _mark_firecrawl_exhausted(reason: str, *, url: str = "", tag: str = "") -> None:
     with _fc_lock:
         if _fc_state["exhausted"]:
             return
-        _fc_state["exhausted"] = True
-        _fc_state["exhausted_reason"] = reason
     where = f" (triggered by {tag}{url[:80]})" if url else ""
     if reason == "402":
+        if _rotate_firecrawl_key():
+            fc_credit_log.warning(
+                "Firecrawl 402 on key %d — rotated to next key%s",
+                _fc_key_state["idx"], where)
+            return
+        with _fc_lock:
+            _fc_state["exhausted"] = True
+            _fc_state["exhausted_reason"] = reason
         fc_credit_log.error(
-            "========== FIRECRAWL CREDITS EXHAUSTED (HTTP 402) ==========\n"
+            "========== FIRECRAWL CREDITS EXHAUSTED (all %d keys) ==========\n"
             "First failing URL%s",
-            where,
+            len(_FIRECRAWL_KEYS), where,
+        )
+        from .jobs import emit_quota_limit
+        emit_quota_limit(
+            "firecrawl",
+            "Your Firecrawl credit limit has been reached.",
+            kind="credits",
+            detail="Web page scraping is paused — some prices may be unverified.",
         )
     elif reason == "budget":
+        with _fc_lock:
+            _fc_state["exhausted"] = True
+            _fc_state["exhausted_reason"] = reason
         fc_credit_log.warning(
             "========== FIRECRAWL SCRAPE BUDGET REACHED ==========\n"
             "Per-run cap FIRECRAWL_MAX_SCRAPES_PER_RUN=%d reached.",
             FIRECRAWL_MAX_SCRAPES,
         )
+        from .jobs import emit_quota_limit
+        emit_quota_limit(
+            "firecrawl",
+            "The Firecrawl scrape limit for this run has been reached.",
+            kind="budget",
+            detail="Remaining pages will use cached or free-fetch data only.",
+        )
 # Total Firecrawl credit budget for a run and the slice reserved exclusively
 # for the stage-3 supplier fallback (so open-web /search can't drain it all).
-FIRECRAWL_RUN_CREDITS = int(os.environ.get("FIRECRAWL_RUN_CREDITS", "1000"))
+FIRECRAWL_RUN_CREDITS = int(os.environ.get(
+    "FIRECRAWL_RUN_CREDITS",
+    str(1000 * max(1, len(_FIRECRAWL_KEYS)))))
 FIRECRAWL_STAGE3_RESERVE = int(os.environ.get("FIRECRAWL_STAGE3_RESERVE", "50"))
 
 
@@ -87,20 +142,26 @@ def _fc_add_credits(n: int):
 
 def reset_firecrawl_budget():
     """Call at the start of each pipeline run."""
+    global SERPAPI_KEY, FIRECRAWL_KEY
     with _fc_lock:
         _fc_state["exhausted"] = False
         _fc_state["exhausted_reason"] = None
         _fc_state["scrapes"] = 0
         _fc_state["skipped"] = 0
         _fc_state["credits"] = 0
+        _fc_key_state["idx"] = 0
+    FIRECRAWL_KEY = _FIRECRAWL_KEYS[0] if _FIRECRAWL_KEYS else ""
     _gp_state["disabled"] = False
     _gp_state["failures"] = 0
     _serp_state["exhausted"] = False
     _serp_state["consecutive_failures"] = 0
-    _shop_state["disabled"] = False
+    _serp_key_state["idx"] = 0
+    SERPAPI_KEY = _SERPAPI_KEYS[0] if _SERPAPI_KEYS else ""
+    _shop_state["disabled"] = SHOP_DISABLE_AFTER == 0
     _shop_state["zero_streak"] = 0
-    log.info("Firecrawl budget reset (max %d scrapes, %d run credits)",
-             FIRECRAWL_MAX_SCRAPES, FIRECRAWL_RUN_CREDITS)
+    log.info("Budget reset (max %d scrapes, %d run credits, %d FC keys, %d serp keys)",
+             FIRECRAWL_MAX_SCRAPES, FIRECRAWL_RUN_CREDITS,
+             len(_FIRECRAWL_KEYS), len(_SERPAPI_KEYS))
 
 
 def firecrawl_stats() -> dict:
@@ -111,6 +172,8 @@ def firecrawl_stats() -> dict:
             "exhausted": _fc_state["exhausted"],
             "exhausted_reason": _fc_state["exhausted_reason"],
             "credits": _fc_state["credits"],
+            "fc_key": f"{_fc_key_state['idx'] + 1}/{len(_FIRECRAWL_KEYS)}",
+            "serp_key": f"{_serp_key_state['idx'] + 1}/{len(_SERPAPI_KEYS)}",
         }
 
 
@@ -154,7 +217,16 @@ _CROSS_SELL_RE = re.compile(
     r"customers\s+(?:who\s+bought|also\s+(?:bought|viewed))|"
     r"people\s+also\s+(?:bought|viewed)|frequently\s+bought\s+together|"
     r"recommended\s+(?:for\s+you|products?|items?)|more\s+like\s+this|"
-    r"you\s+might\s+also\s+like)\b"     # phrase at line start, trailing text OK
+    r"you\s+might\s+also\s+like|"
+    # Amazon PDP carousels (EN + ES localized pages) — these carry OTHER
+    # products' prices and on some pages appear BEFORE the buy box, so a
+    # cross-sell price must never masquerade as the product's price
+    r"consider\s+these\s+(?:available\s+)?items?|"
+    r"considera\s+estos\s+art[íi]culos|"
+    r"products?\s+related\s+to\s+this\s+item|productos\s+relacionados|"
+    r"customers?\s+who\s+viewed\s+this|clientes\s+que\s+vieron|"
+    r"compare\s+with\s+similar\s+items?|comparar\s+con\s+art[íi]culos|"
+    r"what\s+other\s+items\s+do\s+customers\s+buy)\b"     # phrase at line start, trailing text OK
     r"|related\s*:?\s*$"                 # bare "Related" heading (anchored, safe)
     r")"
 )
@@ -231,6 +303,71 @@ _SHIP_ADD_RE = re.compile(r"\+\s*\$\s?([\d,]+\.\d{2})\b")
 _QTY_BREAK_RE = re.compile(r"\d+\s*@\s*\$\s?[\d,]+\.\d{2}")
 
 
+# Category/product-LIST page detector — content-based, for list pages whose URL
+# gives nothing away (grescoproducts.com/polishing-supplies/diamond-impregnated-
+# polishers/ surfaced as a $41.50 "option" via the cheapest of its 16 products).
+# STRONG markers appear only on list pages; "sort by"/"showing X of Y" alone are
+# NOT enough (Walmart product pages carry them in their reviews widget).
+_CAT_STRONG_RE = re.compile(
+    r"(?i)\bproducts?\s+per\s+page\b|\bshop\s+by\s+price\b|"
+    r"\bitems?\s+\d+\s*[-–]\s*\d+\s+of\s+\d+\b")
+_CAT_FILTER_RE = re.compile(r"(?i)\bfilter\s+(?:products?|results)\b")
+_CAT_SORT_RE = re.compile(r"(?i)\bsort\s+by\b")
+
+
+def _looks_category_page(md: str) -> bool:
+    if not md:
+        return False
+    return bool(_CAT_STRONG_RE.search(md)
+                or (_CAT_FILTER_RE.search(md) and _CAT_SORT_RE.search(md)))
+
+
+# Membership two-tier pricing (tdsc prints "YOUR PRICE $65.64  VIP PRICE $63.42"
+# and its structured data carries the VIP number). The buyer is not a member —
+# report the public non-member price, never the membership one.
+_YOUR_PRICE_RE = re.compile(r"(?i)\byour\s+price\b[\s:]*\$\s?([\d,]+\.\d{2})")
+_VIP_PRICE_RE = re.compile(r"(?i)\b(?:vip|member)\s+price\b[\s:]*\$\s?([\d,]+\.\d{2})")
+
+
+# Sale pricing the structured data missed: dentalcity's JSON-LD still carried
+# the pre-sale $22.99 while the page text said "Was: $22.99 Now: $13.99".
+_WAS_NOW_RE = re.compile(
+    r"(?i)\b(?:was|reg(?:ular)?(?:\s+price)?)[:\s]*\$\s?([\d,]+\.\d{2})"
+    r"[\s|,·–-]{0,8}\bnow[:\s]*\$\s?([\d,]+\.\d{2})")
+
+
+def _prefer_sale_price(c, md: str) -> None:
+    """When the page text declares 'Was $X … Now $Y' and the candidate picked up
+    the WAS number (stale structured data), switch to the live sale price."""
+    if not (md and c.price):
+        return
+    for m in _WAS_NOW_RE.finditer(md):
+        was, now = _to_f(m.group(1)), _to_f(m.group(2))
+        if was and now and now < was and abs(c.price - was) < 0.005:
+            c.price = now
+            c.original_price = was
+            c.notes = ((c.notes + " · ") if c.notes else "") + (
+                f"sale price ${now:,.2f} used (page shows 'Was ${was:,.2f}'; "
+                f"structured data still carried the pre-sale number)")
+            return
+
+
+def _prefer_public_price(c, md: str) -> None:
+    """When the page lists BOTH a public and a membership price and the candidate
+    picked up the membership number, switch to the public one (annotated)."""
+    if not (md and c.price):
+        return
+    ym, vm = _YOUR_PRICE_RE.search(md), _VIP_PRICE_RE.search(md)
+    if not (ym and vm):
+        return
+    pub, vip = _to_f(ym.group(1)), _to_f(vm.group(1))
+    if pub and vip and abs(c.price - vip) < 0.005 and pub != vip:
+        c.price = pub
+        c.notes = ((c.notes + " · ") if c.notes else "") + (
+            f"non-member price ${pub:,.2f} used (page also lists a members-only "
+            f"price of ${vip:,.2f})")
+
+
 def _agg_include_shipping() -> bool:
     """Whether to fold flat-rate shipping into the reported aggregator price.
     Default OFF: report the ITEM/LIST price so it compares apples-to-apples with
@@ -239,6 +376,13 @@ def _agg_include_shipping() -> bool:
     $54.66. Set AGG_INCLUDE_SHIPPING=1 to restore landed-total behaviour."""
     return os.environ.get("AGG_INCLUDE_SHIPPING", "0") == "1"
 _FREE_SHIP_RE = re.compile(r"free\s+(?:standard\s+)?shipping|free\s+ship", re.I)
+# Heavy-item surcharge ("Heavy shipping surcharge $4.00") — an unavoidable
+# per-item fee net32 charges ON TOP of even free standard shipping and folds
+# into the row's own Total. Unlike flat-rate shipping (excluded by default for
+# apples-to-apples vs Schein's ex-shipping unit price), this is part of the
+# item's real price and is ALWAYS added (QA: Shine $360.10/ea was shown while
+# the page's own "LOWEST PRICE" total is $364.10).
+_SURCHARGE_RE = re.compile(r"shipping\s+surcharge\s+\$\s?([\d,]+\.\d{2})", re.I)
 _LOWEST_RE = re.compile(r"lowest\s+price", re.I)
 # Net32 glues the badge straight onto the lowest seller's Total ("$26.73LOWEST
 # PRICE"). Reading THIS literal is far more robust than inferring the badge from
@@ -270,6 +414,21 @@ def _aggregator_domain(url: str) -> Optional[str]:
         if d == a or d.endswith("." + a):
             return a
     return None
+
+
+# Stores whose prices demonstrably move day-to-day without being multi-seller
+# aggregators — crazydentalprices "Lowest Price Guaranteed" tracks net32 and
+# drifted $355.14 → $355.10 overnight (client QA 2026-07-15). Their pages use
+# the SHORT aggregator cache TTL so reported prices stay current, but they do
+# NOT go through the aggregator seller-table parser (normal single-price pages).
+# Client-tunable via FRESH_PRICE_DOMAINS (comma-separated).
+FRESH_PRICE_DOMAINS = {d.strip().lower() for d in os.environ.get(
+    "FRESH_PRICE_DOMAINS", "crazydentalprices.com").split(",") if d.strip()}
+
+
+def _fresh_price_domain(url: str) -> bool:
+    d = _domain(url)
+    return any(d == s or d.endswith("." + s) for s in FRESH_PRICE_DOMAINS)
 
 
 def _seller_rows(section: str) -> list:
@@ -353,7 +512,9 @@ def _net32_options(section: str):
         else:
             sm = _SHIP_ADD_RE.search(ahead)
             ship = (_to_f(sm.group(1)) or 0.0) if sm else 0.0
-        total = round(base + (ship if _agg_include_shipping() else 0.0), 2)
+        sur = _SURCHARGE_RE.search(ahead)
+        surcharge = (_to_f(sur.group(1)) or 0.0) if sur else 0.0
+        total = round(base + surcharge + (ship if _agg_include_shipping() else 0.0), 2)
         if total <= 0:
             continue
         oos = _OOS_RE.search(behind)
@@ -441,9 +602,8 @@ def _agg_debug_dump(url, dom, section, markdown, options, backorder,
     Best-effort: never raises into the scrape path."""
     try:
         import hashlib
-        dbg_dir = Path(os.environ.get(
-            "AGG_DEBUG_DIR",
-            Path(__file__).resolve().parent.parent / "output" / "agg_debug"))
+        from .paths import resolve_agg_debug_dir
+        dbg_dir = resolve_agg_debug_dir()
         dbg_dir.mkdir(parents=True, exist_ok=True)
         h = hashlib.sha1((url or "").encode("utf-8")).hexdigest()[:10]
         slug = re.sub(r"[^a-zA-Z0-9]+", "-", (url or "").split("//")[-1])[:60].strip("-")
@@ -644,7 +804,7 @@ def load_excluded_domains() -> List[str]:
     if not f.exists():
         return ["henryschein.com", "ebay.com", "amazon.com"]
     out = []
-    for line in f.read_text().splitlines():
+    for line in f.read_text(encoding="utf-8").splitlines():
         line = line.split("#")[0].strip().lower()
         if line:
             out.append(line)
@@ -660,7 +820,7 @@ def load_supplier_sites() -> List[str]:
     if not f.exists():
         return []
     out = []
-    for line in f.read_text().splitlines():
+    for line in f.read_text(encoding="utf-8").splitlines():
         line = line.split("#")[0].strip().lower()
         if line:
             out.append(line)
@@ -680,7 +840,7 @@ def load_seed_urls() -> dict:
     out: dict = {}
     if not f.exists():
         return out
-    for line in f.read_text().splitlines():
+    for line in f.read_text(encoding="utf-8").splitlines():
         line = line.split("#")[0].strip()
         if not line or "|" not in line:
             continue
@@ -968,14 +1128,27 @@ def _serp_pace():
         _serp_last[0] = _time.monotonic()
 
 
+def _rotate_serpapi_key() -> bool:
+    """Try the next SerpAPI key. Returns True if a fresh key is available."""
+    global SERPAPI_KEY
+    with _serp_lock:
+        nxt = _serp_key_state["idx"] + 1
+        if nxt >= len(_SERPAPI_KEYS):
+            return False
+        _serp_key_state["idx"] = nxt
+        SERPAPI_KEY = _SERPAPI_KEYS[nxt]
+        _serp_state["exhausted"] = False
+        _serp_state["consecutive_failures"] = 0
+    log.info("========== SERPAPI KEY ROTATED → key %d/%d ==========",
+             nxt + 1, len(_SERPAPI_KEYS))
+    return True
+
+
 def _serpapi(params: dict) -> dict:
-    """SerpAPI call with pacing + 429 backoff. Once the monthly/credit quota is
-    exhausted (persistent 429), a run-level flag short-circuits further calls so
-    we fail fast instead of stalling every remaining item."""
-    # Only give up entirely after MANY consecutive failures (a real quota wall),
-    # NOT after one item — SerpAPI throttling is intermittent and recovers.
+    """SerpAPI call with pacing + 429 backoff + multi-key rotation.
+    When a key hits the quota wall, rotates to the next key automatically."""
     if _serp_state["exhausted"]:
-        raise RuntimeError("SerpAPI quota wall hit earlier this run")
+        raise RuntimeError("SerpAPI quota wall hit earlier this run (all keys exhausted)")
     params = {**params, "api_key": SERPAPI_KEY}
     last_err = None
     for attempt in range(SERP_MAX_RETRIES):
@@ -992,14 +1165,14 @@ def _serpapi(params: dict) -> dict:
                 continue
             r.raise_for_status()
             with _serp_lock:
-                _serp_state["consecutive_failures"] = 0   # success resets the wall counter
+                _serp_state["consecutive_failures"] = 0
+            from .jobs import emit
+            emit("serpapi", action="search",
+                 engine=params.get("engine", "google"),
+                 query=(params.get("q") or "")[:120])
             return r.json()
         except requests.HTTPError as e:
             status = getattr(getattr(e, "response", None), "status_code", None)
-            # 5xx is a transient server-side wall — stop retrying this call but let
-            # it count toward the give-up breaker below (a sustained 5xx storm then
-            # trips `exhausted` instead of every item grinding the full retry loop).
-            # 4xx (bad query etc.) stays an immediate raise — retrying won't help.
             if status and status >= 500:
                 last_err = e
                 break
@@ -1011,11 +1184,21 @@ def _serpapi(params: dict) -> dict:
     with _serp_lock:
         _serp_state["consecutive_failures"] += 1
         if _serp_state["consecutive_failures"] >= SERP_FAIL_GIVEUP:
+            if _rotate_serpapi_key():
+                log.warning("SerpAPI key %d exhausted after %d consecutive failures — "
+                            "rotated to next key, retrying this call.",
+                            _serp_key_state["idx"], SERP_FAIL_GIVEUP)
+                return _serpapi(params)
             _serp_state["exhausted"] = True
-            log.error("SerpAPI failed %d calls in a row — likely a real quota/rate "
-                      "wall. Remaining items this run will be skipped. Raise "
-                      "SERPAPI_MIN_INTERVAL, lower SUPPLIER_SWEEP_MAX_SITES, or upgrade plan.",
-                      SERP_FAIL_GIVEUP)
+            log.error("SerpAPI failed %d calls in a row — all %d keys exhausted.",
+                      SERP_FAIL_GIVEUP, len(_SERPAPI_KEYS))
+            from .jobs import emit_quota_limit
+            emit_quota_limit(
+                "serpapi",
+                "Your SerpAPI credit limit has been reached.",
+                kind="credits",
+                detail="Product discovery will use Firecrawl and cached results instead.",
+            )
     raise last_err or RuntimeError("SerpAPI call failed")
 
 
@@ -1035,9 +1218,9 @@ _gp_state = {"disabled": False, "failures": 0}
 # google_shopping auto-skip: if it yields 0 usable candidates for this many
 # items in a row, stop calling it for the rest of the run (logs show it
 # consistently returning 0 usable on this SerpAPI plan). Saves 1 call/query/item.
-_shop_state = {"disabled": False, "zero_streak": 0}
-_shop_lock = threading.Lock()   # guards _shop_state under the parallel item workers
 SHOP_DISABLE_AFTER = int(os.environ.get("GOOGLE_SHOPPING_DISABLE_AFTER", "3"))
+_shop_state = {"disabled": SHOP_DISABLE_AFTER == 0, "zero_streak": 0}
+_shop_lock = threading.Lock()   # guards _shop_state under the parallel item workers
 
 
 def _resolve_google_product(product_id: str, cands: list, seen: set,
@@ -1353,6 +1536,9 @@ def _firecrawl_search(query: str, cands: list, seen: set, *,
     if added:
         log.info("Firecrawl /search (%s) — +%d candidate(s) for %r (credits used=%s, left=%d)",
                  stage, added, query[:40], used, _fc_credits_left())
+        from .jobs import emit
+        emit("firecrawl", action="search", stage=stage, query=query[:120],
+             results=added, credits=used)
     return added
 
 
@@ -1408,9 +1594,315 @@ def _firecrawl_supplier_gap_sweep(item: OrderLineItem, cands: list, seen: set) -
     return added
 
 
+# ------------------------------------------------- marketplace sweep --------
+# Dedicated Amazon/Walmart/eBay lookup for the per-item 🅐/🅦/🅔 report rows.
+# These domains stay in excluded_domains.txt for the REGULAR sweep (marketplace
+# noise must not claim option slots); this path is the only one allowed to
+# search them, and its candidates are kept separate end-to-end.
+
+MARKETPLACE_DOMAINS = ["amazon.com", "walmart.com", "ebay.com"]
+MARKETPLACE_ENABLED = os.environ.get("MARKETPLACE_ROWS", "1") not in ("0", "false", "False")
+
+# Only true product-detail pages qualify — category/search pages on these
+# marketplaces can never yield a defensible price.
+_MKT_PRODUCT_RE = {
+    "amazon.com":  re.compile(r"/(?:dp|gp/product)/[A-Z0-9]{8,}", re.I),
+    "walmart.com": re.compile(r"/ip/", re.I),
+    "ebay.com":    re.compile(r"/itm/", re.I),
+}
+
+
+def _mkt_cache_key(sku: str, dom: str) -> str:
+    return f"{sku}||mkt||{dom}"
+
+
+_EBAY_COND_RES = (
+    re.compile(r'schema\.org\\?/+(New|Used|Refurbished|Damaged)Condition', re.I),
+    re.compile(r'"conditionDisplayName"\s*:\s*"([^"]{2,40})"'),
+    re.compile(r'"itemCondition"\s*:\s*"([^"]{2,60})"'),
+)
+
+
+def _ebay_condition(raw_html: str) -> str:
+    """The listing condition an eBay page declares in its structured data
+    (JSON-LD itemCondition / embedded conditionDisplayName). '' when absent."""
+    for rx in _EBAY_COND_RES:
+        m = rx.search(raw_html or "")
+        if m:
+            val = m.group(1).strip()
+            # normalize a schema.org URL fragment ("NewCondition") to plain text
+            return re.sub(r"Condition$", "", val.rsplit("/", 1)[-1]) or val
+    return ""
+
+
+_SP_ENGINE = {"amazon.com": "amazon", "ebay.com": "ebay", "walmart.com": "walmart"}
+
+
+def _sp_price(x) -> Optional[float]:
+    """Pull a float price from a SerpAPI result's varied price shapes."""
+    for k in ("extracted_price", "price"):
+        v = x.get(k)
+        if isinstance(v, (int, float)):
+            return float(v)
+        if isinstance(v, dict):
+            for kk in ("extracted", "extracted_value", "value", "raw"):
+                if v.get(kk) is not None:
+                    p = _parse_price(str(v[kk]))
+                    if p:
+                        return p
+        if isinstance(v, str):
+            p = _parse_price(v)
+            if p:
+                return p
+    for k in ("primary_offer",):
+        v = x.get(k)
+        if isinstance(v, dict):
+            p = v.get("offer_price") or v.get("min_price")
+            if p:
+                return _parse_price(str(p))
+    return None
+
+
+def _serpapi_marketplace(item: OrderLineItem, dom: str, limit: int = 8) -> list:
+    """Discover marketplace listings via SerpAPI's DEDICATED engine (amazon / ebay
+    / walmart) — far better than the Firecrawl per-domain /search: it returns the
+    marketplace's own ranked results WITH the price (and eBay condition) already
+    parsed, so no page scrape is needed (defeats Amazon's bot wall). Returns hits
+    [{url,title,sp_price,sp_condition,serp:True}] ready to become candidates."""
+    engine = _SP_ENGINE.get(dom)
+    if not (engine and SERPAPI_KEY):
+        return []
+    q = (item.search_query or item.description or "").strip()
+    variant = (item.variant or "").strip()
+    if variant and variant.lower() not in q.lower():
+        q = f"{q} {variant}"
+    params = {"engine": engine}
+    if engine == "ebay":
+        params.update({"_nkw": q, "ebay_domain": "ebay.com"})
+    elif engine == "amazon":
+        params.update({"k": q})
+    else:  # walmart
+        params.update({"query": q})
+    try:
+        data = _serpapi(params)
+    except Exception as e:
+        log.warning("SKU %s — SerpAPI %s failed: %s", item.schein_sku, engine, e)
+        return []
+    hits = []
+    for x in (data.get("organic_results") or [])[:limit * 2]:
+        link = x.get("link") or x.get("product_page_url") or ""
+        if engine == "amazon" and x.get("asin"):
+            link = f"https://www.amazon.com/dp/{x['asin']}"
+        link = canonical_url(link)
+        d = _domain(link)
+        if not link or not (d == dom or d.endswith("." + dom)):
+            continue
+        cond = ""
+        c = x.get("condition")
+        if isinstance(c, str):
+            cond = c
+        hits.append({"url": link, "title": x.get("title", ""),
+                     "sp_price": _sp_price(x), "sp_condition": cond,
+                     "snippet_price": _sp_price(x), "serp": True})
+        if len(hits) >= limit:
+            break
+    log.info("SKU %s — SerpAPI %s: %d listing(s) with direct prices",
+             item.schein_sku, engine, len(hits))
+    return hits
+
+
+def serpapi_product(url: str, dom: str) -> tuple:
+    """SerpAPI product-DETAIL lookup by ID — for a SEEDED marketplace URL whose
+    price the search + scrape couldn't get (Walmart renders its price in JS, and
+    SerpAPI's walmart/amazon SEARCH may not surface a specific seeded listing).
+    Returns (price, title, condition) or (None, None, '')."""
+    if not (SERPAPI_KEY and not _serp_state["exhausted"]):
+        return None, None, ""
+    engine = params = None
+    if dom == "walmart.com":
+        m = re.search(r"/ip/(?:.*/)?(\d{6,})", url)
+        if m:
+            engine, params = "walmart_product", {"product_id": m.group(1)}
+    elif dom == "amazon.com":
+        m = re.search(r"/dp/([A-Z0-9]{10})", url)
+        if m:
+            engine, params = "amazon_product", {"asin": m.group(1), "amazon_domain": "amazon.com"}
+    if not engine:
+        return None, None, ""
+    try:
+        data = _serpapi({"engine": engine, **params})
+    except Exception as e:
+        log.warning("SerpAPI %s lookup failed for %s: %s", engine, url[:50], e)
+        return None, None, ""
+    # response shape differs by engine: amazon_product → 'product_results' (plural,
+    # price under .price), walmart_product → 'product_result' (singular, .price_map)
+    p = data.get("product_result") or data.get("product_results") or data.get("product") or {}
+    price = (_sp_price(p) or _sp_price((p.get("price_map") or {}))
+             or _parse_price(str((p.get("price_map") or {}).get("price") or ""))
+             or _parse_price(str(p.get("price") or "")))
+    if not price:
+        for po in (data.get("purchase_options") or [])[:1]:
+            price = _sp_price(po) or _parse_price(str(po.get("price") or ""))
+    cond = p.get("condition") if isinstance(p.get("condition"), str) else ""
+    return price, (p.get("title") or ""), cond
+
+
+def marketplace_search(item: OrderLineItem, dom: str, limit: int = 6) -> List[PriceCandidate]:
+    """SerpAPI marketplace engine (preferred) or Firecrawl /v2/search restricted to
+    one marketplace domain (fallback). SerpAPI returns direct prices + eBay
+    condition (no scrape). Returns product candidates tagged with .marketplace.
+    Returns product-page candidates ranked by title-token overlap with the item,
+    tagged with .marketplace. Discovery results are cached in the same SQLite
+    discovery_cache (key '<sku>||mkt||<domain>') so a re-run within the cache
+    window spends zero search credits."""
+    sku = item.schein_sku
+    tag = dom.split(".")[0]
+    key = _mkt_cache_key(sku, dom)
+    # MARKETPLACE SEEDS: seed_urls.txt entries on THIS marketplace domain always
+    # lead the queue. The regular sweep deliberately drops marketplace-domain
+    # seeds (is_excluded), so this is the only path that honors them — it lets a
+    # verified listing the site-restricted /search can't surface (e.g. Walmart's
+    # Small-glove variant hidden behind an XL-labelled URL) be checked every run.
+    seeds = []
+    for su in SEED_URLS.get(sku, []):
+        cu = canonical_url(su)
+        d = _domain(cu)
+        if (d == dom or d.endswith("." + dom)) and not DOC_EXT_RE.search(cu):
+            seeds.append({"url": cu, "title": "", "snippet_price": None, "seed": True})
+    hits = None   # list of {"url","title","snippet_price"}
+    cached = _disc_cache.get(key) if DISCOVERY_CACHE_ENABLED else None
+    if cached is not None:
+        hits = [h for h in cached if isinstance(h, dict) and h.get("url")]
+        log.info("SKU %s — marketplace %s: discovery CACHE HIT (%d url(s), 0 credits)",
+                 sku, tag, len(hits))
+    # PREFERRED: SerpAPI dedicated marketplace engine (direct prices + condition,
+    # no scrape). Falls through to Firecrawl only when SerpAPI has no key/quota.
+    if hits is None and SERPAPI_KEY and not _serp_state["exhausted"]:
+        sp = _serpapi_marketplace(item, dom, limit=8)
+        if sp:
+            hits = sp
+            if DISCOVERY_CACHE_ENABLED:
+                with _disc_lock:
+                    _disc_cache[key] = hits
+                    _disc_new[key] = hits
+    if hits is None and (not FIRECRAWL_KEY or _fc_state["exhausted"]):
+        hits = []          # seeds below can still be served from the scrape cache
+    if hits is None:
+        q = (item.search_query or item.description or "").strip()
+        variant = (item.variant or "").strip()
+        if variant and variant.lower() not in q.lower():
+            q = f"{q} {variant}"
+        body = {"query": q, "limit": limit, "sources": ["web"],
+                "includeDomains": [dom]}
+        payload = None
+        try:
+            r = requests.post("https://api.firecrawl.dev/v2/search",
+                              headers={"Authorization": f"Bearer {FIRECRAWL_KEY}",
+                                       "Content-Type": "application/json"},
+                              json=body, timeout=(15, 60))
+            if r.status_code == 402:
+                _mark_firecrawl_exhausted("402", tag=f"marketplace {tag} ")
+            else:
+                r.raise_for_status()
+                payload = r.json()
+        except Exception as e:
+            log.warning("SKU %s — marketplace %s search failed: %s", sku, tag, e)
+        if payload is None:
+            hits = []      # search failed — seeds (if any) still proceed; not cached, retried next run
+        else:
+            used = payload.get("creditsUsed")
+            if used is None:
+                used = max(2, -(-limit // 10) * 2)
+            _fc_add_credits(used)
+            hits = []
+            for r0 in (payload.get("data") or {}).get("web") or []:
+                url = canonical_url(r0.get("url") or "")
+                d = _domain(url)
+                if not url or not (d == dom or d.endswith("." + dom)):
+                    continue
+                if DOC_EXT_RE.search(url) or not _MKT_PRODUCT_RE[dom].search(url):
+                    continue
+                hits.append({"url": url, "title": r0.get("title", ""),
+                             "snippet_price": _parse_price(r0.get("description", ""))})
+            log.info("SKU %s — marketplace %s: /search → %d product page(s) "
+                     "(credits used=%s, left=%d)", sku, tag, len(hits), used, _fc_credits_left())
+            if DISCOVERY_CACHE_ENABLED:
+                with _disc_lock:
+                    _disc_cache[key] = hits
+                    _disc_new[key] = hits
+    # Normalize Amazon URLs to the canonical /dp/<ASIN> FIRST (on seeds AND hits),
+    # so a seed's full-path URL and SerpAPI's /dp/ URL for the same ASIN match in
+    # the merge below (and localized /-/es/ carousels are avoided).
+    if dom == "amazon.com":
+        for h in list(seeds) + hits:
+            m = re.search(r"/(?:dp|gp/product)/([A-Z0-9]{10})", h["url"], re.I)
+            if m:
+                h["url"] = f"https://www.amazon.com/dp/{m.group(1)}"
+    # Same for eBay: collapse to the canonical /itm/<id> so a seed and the SerpAPI
+    # result for the same item (differing only by ?query tracking params) merge.
+    if dom == "ebay.com":
+        for h in list(seeds) + hits:
+            m = re.search(r"/itm/(\d{9,15})", h["url"])
+            if m:
+                h["url"] = f"https://www.ebay.com/itm/{m.group(1)}"
+    # seed URLs lead the queue (deduped against search hits). If a seeded URL is
+    # ALSO in the SerpAPI results, fold the SerpAPI title/price/condition into the
+    # seed so it isn't left blank (the seed's known-good URL + SerpAPI's data).
+    if seeds:
+        _by_url = {h["url"]: h for h in hits}
+        for s in seeds:
+            m = _by_url.get(s["url"])
+            if m:
+                for k in ("title", "sp_price", "sp_condition", "snippet_price", "serp"):
+                    if m.get(k) and not s.get(k):
+                        s[k] = m[k]
+        _seed_set = {s["url"] for s in seeds}
+        hits = seeds + [h for h in hits if h["url"] not in _seed_set]
+        log.info("SKU %s — marketplace %s: %d seed URL(s) from seed_urls.txt lead the queue",
+                 sku, tag, len(seeds))
+    # (legacy) normalize any remaining Amazon URLs — harmless no-op after the above
+    if dom == "amazon.com":
+        for h in hits:
+            m = re.search(r"/(?:dp|gp/product)/([A-Z0-9]{10})", h["url"], re.I)
+            if m:
+                h["url"] = f"https://www.amazon.com/dp/{m.group(1)}"
+    # rank by title-token overlap with the item (brand/product/variant words)
+    anchors = _anchor_tokens(item)
+
+    def _score(h):
+        toks = _rel_tok(h.get("title", ""))
+        return sum(1 for a in anchors if any(_tok_match(a, t) for t in toks))
+    # seeds stay ahead of ranked search hits regardless of title-token score
+    ranked = sorted(hits, key=lambda h: (0 if h.get("seed") else 1, -_score(h)))
+    seen, out = set(), []
+    for h in ranked:
+        if h["url"] in seen:
+            continue
+        seen.add(h["url"])
+        pc = PriceCandidate(
+            title=h.get("title", ""), url=h["url"], source_site=dom,
+            price=h.get("snippet_price"), marketplace=tag)
+        if h.get("seed"):
+            pc._seed = True   # operator-vouched (seed_urls.txt) — exempt from color-only conflict
+        if h.get("serp"):
+            # SerpAPI gave us the price + condition directly — trust them and skip
+            # the (bot-blocked) page scrape; the matcher does title-based matching.
+            pc._serp_direct = True
+            if h.get("sp_price"):
+                pc.price = h["sp_price"]
+                pc.price_structured = True
+            if h.get("sp_condition"):
+                pc._ebay_condition = h["sp_condition"]
+        out.append(pc)
+    return out
+
+
 def market_sweep(item: OrderLineItem, max_candidates: int = 14) -> tuple[List[PriceCandidate], List[str]]:
     """Broad public sweep. Runs on EVERY item EVERY run (PRD 4.2)."""
     queries = _item_queries(item)
+    from .jobs import emit
+    emit("discovery_start", sku=item.schein_sku, queries=queries,
+         message=f"Searching prices for SKU {item.schein_sku}")
     log.info("SKU %s — market sweep starting (%d quer%s: %s)",
              item.schein_sku, len(queries), "y" if len(queries) == 1 else "ies",
              " | ".join(q[:60] for q in queries))
@@ -1630,6 +2122,8 @@ def market_sweep(item: OrderLineItem, max_candidates: int = 14) -> tuple[List[Pr
                  shortlist[0].price, shortlist[0].source_site)
     else:
         log.warning("SKU %s — sweep done: no candidates found", item.schein_sku)
+    emit("discovery_complete", sku=item.schein_sku,
+         shortlisted=len(shortlist), total_found=len(cands))
     return shortlist, flagged
 
 
@@ -1670,6 +2164,9 @@ _MICRODATA_PRICE_RE = re.compile(
     r'(?:data-rate|content)=["\']\s*\$?([0-9][0-9,]*\.[0-9]{1,2})', re.I)
 _MICRODATA_PRICE_TEXT_RE = re.compile(
     r'itemprop=["\']price["\'][^>]*>\s*\$?([0-9][0-9,]*\.[0-9]{2})\s*<', re.I)
+# "price": <num> inside any embedded JSON/JS blob. The quote before the key is
+# required so lowPrice/salePrice/unit_price keys can never match.
+_JS_PRICE_KV_RE = re.compile(r"[\"']price[\"']\s*:\s*[\"']?(\d[\d,]*(?:\.\d+)?)")
 
 
 def _microdata_price(raw_html: str):
@@ -1797,6 +2294,23 @@ def structured_price(metadata: dict, raw_html: str):
         mp, mp_single = _microdata_price(raw_html)
         if mp:
             p, single = mp, mp_single
+    if p is None and raw_html:
+        # LAST-RESORT single-offer scan: some stores (frontierdental, vitality-
+        # medical) render the price client-side and expose it only inside an
+        # embedded JS state blob — no JSON-LD block, no meta tag, and nothing in
+        # the visible markdown, so these pages priced as None every run. Safe
+        # ONLY when the whole page agrees on EXACTLY ONE distinct plausible
+        # "price" value; any ambiguity (variant matrices, cross-sell state) →
+        # skip and leave it to the LLM path.
+        vals = set()
+        for m in _JS_PRICE_KV_RE.finditer(raw_html):
+            v = _to_price(m.group(1))
+            if v and 0.5 <= v <= STRUCTURED_PRICE_MAX:
+                vals.add(round(v, 2))
+                if len(vals) > 1:
+                    break
+        if len(vals) == 1:
+            p, single = vals.pop(), True
     name = name or (meta.get("og:title") if isinstance(meta.get("og:title"), str) else None) \
         or (meta.get("title") if isinstance(meta.get("title"), str) else None)
     if p is None or p > STRUCTURED_PRICE_MAX:
@@ -1962,6 +2476,28 @@ def _split_sprice(text: str):
         return None, text
 
 
+_SNAME_MARKER = "[[SNAME "
+
+
+def _sname_marker(name: str) -> str:
+    return f"{_SNAME_MARKER}{name.strip()[:180].replace(']]', ')')}]]"
+
+
+def _split_sname(text: str):
+    """Pull an embedded structured-name marker off the front of cached text.
+    Returns (name_or_None, clean_text). Persists the page's own og/JSON-LD product
+    title across cache hits so nav-junk pages (frontierdental) keep their identity
+    evidence for the heading-confirmation pass without a fresh scrape."""
+    if not text or not text.startswith(_SNAME_MARKER):
+        return None, text
+    try:
+        j = text.index("]]")
+        name = text[len(_SNAME_MARKER):j].strip()
+        return (name or None), text[j + 2:].lstrip("\n")
+    except Exception:
+        return None, text
+
+
 def _vmatrix_marker(records) -> str:
     import json as _json
     if isinstance(records, dict):                  # legacy {sku:price}
@@ -2050,16 +2586,37 @@ def _apply_variant_matrix(c: PriceCandidate, records, tag: str = "") -> bool:
         # exact SKU/MPN, or page SKU = <vendor/mfr prefix> + order MPN (3M-7210FF
         # for 7210FF). NEVER match when the order MPN merely STARTS WITH the page
         # SKU (dropped suffix = usually the variant: 9736H-150-HP-TRQ ≠ ...HP).
+        rmpn = mpn.lower().strip()
         for r in records:
-            norm = re.sub(r"[^a-z0-9]", "", str(r["sku"]).lower())
+            raw = str(r["sku"]).lower().strip()
+            norm = re.sub(r"[^a-z0-9]", "", raw)
             if not norm:
                 continue
             if (len(want_sku) >= 5 and norm == want_sku) or (len(want) >= 5 and norm == want):
                 exact = r; break
-            if (prefixed is None and has_alpha and len(want) >= 5 and len(norm) > len(want)
+            # page SKU = order SKU + a trailing DESCRIPTOR ("8969286 1Box" for the
+            # Henry Schein SKU 8969286) — a reseller keying by the exact HS SKU with
+            # a pack descriptor appended. Require a word boundary after the SKU so
+            # "89692861" (a different longer SKU) never matches.
+            if (len(want_sku) >= 5 and raw.startswith(str(osku).lower())
+                    and re.match(r"^\s*[^a-z0-9]", raw[len(str(osku)):] or " ")):
+                exact = r; break
+            # Digit-only MPNs may prefix-match too (amtouch keys ReSURGE as
+            # SUL-21521 for order MPN 21521) — the boundary check below already
+            # rejects the dangerous case where the joining character is another
+            # digit (a coincidental numeric suffix), which is what the old
+            # has_alpha requirement was over-broadly guarding against.
+            if (prefixed is None and len(want) >= 5 and len(norm) > len(want)
                     and norm.endswith(want)):
                 b = norm[len(norm) - len(want) - 1]
                 if not (b.isdigit() and want[0].isdigit()):
+                    prefixed = r
+                # a NON-alphanumeric separator in the RAW page SKU right before
+                # the MPN proves a distributor prefix even when normalization
+                # puts digit against digit (curio's "516-7210FF" for 7210FF)
+                elif (len(rmpn) >= 5 and raw.endswith(rmpn)
+                        and len(raw) > len(rmpn)
+                        and not raw[len(raw) - len(rmpn) - 1].isalnum()):
                     prefixed = r
     hit, kind = (exact or prefixed), "SKU/MPN"
     if not hit:
@@ -2078,6 +2635,12 @@ def _apply_variant_matrix(c: PriceCandidate, records, tag: str = "") -> bool:
     if kind == "SKU/MPN":
         c.mpn_confirmed = True       # page SKU == order identity → definitive product
     label = (hit.get("title") or hit.get("sku") or mpn or osku)
+    # page-verified product identity — give the candidate a name so the option
+    # pooler (which requires scraped_product_name) doesn't silently drop it
+    # (anson's rescued $49.99 ParaPost never surfaced without this).
+    if not c.scraped_product_name:
+        c.scraped_product_name = (hit.get("title") or c.structured_name
+                                  or c.title or label)
     c.notes = ((c.notes + " · ") if c.notes else "") + (
         f"variant-matrix price ${price:.2f} (ordered variant by {kind}: {label})")
     log.info("%sVARIANT MATRIX — $%.2f via %s (%s)", tag, price, kind, label)
@@ -2133,11 +2696,15 @@ def free_fetch_structured(c: PriceCandidate, tag: str = "") -> bool:
         markers += _vmatrix_marker(records) + "\n"
     if not matrix_hit and sp_single and sp and sp > 0:
         markers += _sprice_marker(sp) + "\n"
+    if c.structured_name:
+        markers += _sname_marker(c.structured_name) + "\n"
     cache_text = markers + main
     c.scraped_markdown = main[:int(os.environ.get("SCRAPE_MD_CAP", "10000"))]
     if not matrix_hit:
         c.notes = ((c.notes + " · ") if c.notes else "") + (
             "price $%.2f via free HTTP fetch (page structured data — 0 Firecrawl credits)" % sp)
+    _prefer_public_price(c, main)               # tdsc-style member pricing → public price
+    _prefer_sale_price(c, main)                 # was/now sale the structured data missed
     if SCRAPE_CACHE_ENABLED:
         try:
             from . import db
@@ -2165,8 +2732,12 @@ def firecrawl_verify(c: PriceCandidate, sku: str = "", allow_paid: bool = True) 
     if SCRAPE_CACHE_ENABLED:
         try:
             from . import db
-            # Aggregator pages get the short (default 0) TTL; everything else 24h.
-            ttl = AGG_SCRAPE_CACHE_HOURS if _aggregator_domain(c.url) else SCRAPE_CACHE_HOURS
+            # Aggregator pages AND fast-moving single-price stores (crazydental-
+            # prices tracks net32 daily) get the short TTL; everything else the
+            # long one.
+            ttl = (AGG_SCRAPE_CACHE_HOURS
+                   if _aggregator_domain(c.url) or _fresh_price_domain(c.url)
+                   else SCRAPE_CACHE_HOURS)
             cached_md = db.get_cached_scrape(c.url, ttl) if ttl > 0 else None
         except Exception:
             cached_md = None
@@ -2176,6 +2747,9 @@ def firecrawl_verify(c: PriceCandidate, sku: str = "", allow_paid: bool = True) 
             # MPN→variant price (keeps amtouch-style pages correct on cache hits).
             cached_matrix, cached_md = _split_vmatrix(cached_md)
             cached_sprice, cached_md = _split_sprice(cached_md)
+            cached_sname, cached_md = _split_sname(cached_md)
+            if cached_sname and not c.structured_name:
+                c.structured_name = cached_sname
             full_main = _strip_cross_sell(cached_md)          # full (uncapped) for table parsing
             # Login gate must run on CACHED pages too — otherwise a gated page
             # whose markdown holds a stray "$" (e.g. midwestdental floss "Sign in
@@ -2191,6 +2765,14 @@ def firecrawl_verify(c: PriceCandidate, sku: str = "", allow_paid: bool = True) 
                 c.match_type = "rejected"
                 c.rejected_reason = "price gated behind login (login-to-see-price)"
                 return c
+            # deterministic category-page rejection on CACHED pages too — a list
+            # page's cheapest product must never pose as this item's price
+            if not _aggregator_domain(c.url) and _looks_category_page(full_main):
+                log.info("%scategory/list page (cached) — rejected: %s", tag, c.url[:80])
+                c.match_type = "rejected"
+                c.rejected_reason = "category/list page (site listing controls detected) — never a product match"
+                c.price = None
+                return c
             c.scraped_markdown = full_main[:int(os.environ.get("SCRAPE_MD_CAP", "10000"))]
             if cached_matrix:
                 _apply_variant_matrix(c, cached_matrix, tag)  # MPN→variant price (amtouch)
@@ -2202,6 +2784,8 @@ def firecrawl_verify(c: PriceCandidate, sku: str = "", allow_paid: bool = True) 
                 c.notes = ((c.notes + " · ") if c.notes else "") + (
                     f"price ${cached_sprice:.2f} via page structured data (cached)")
             _apply_aggregator_lock(c, full_main, tag)         # net32/supplyclinic → deterministic price
+            _prefer_public_price(c, full_main)                # tdsc-style member pricing → public price
+            _prefer_sale_price(c, full_main)                  # was/now sale the structured data missed
             log.info("%sscrape CACHE HIT (%d chars, 0 credits) — %s",
                      tag, len(c.scraped_markdown), c.url[:60])
             return c
@@ -2237,6 +2821,9 @@ def firecrawl_verify(c: PriceCandidate, sku: str = "", allow_paid: bool = True) 
             return c
         _fc_state["scrapes"] += 1
     c._paid_scrape = True            # a real (billed) Firecrawl scrape is being spent
+    from .jobs import emit
+    emit("firecrawl", action="scrape", sku=sku, site=c.source_site, url=c.url[:120],
+         message=f"Firecrawl scraping {c.source_site}")
     log.info("%sscraping %s (%s) …", tag, c.source_site, c.url[:100])
     try:
         # Hard total-time deadline: requests' read timeout resets on every byte,
@@ -2250,19 +2837,42 @@ def firecrawl_verify(c: PriceCandidate, sku: str = "", allow_paid: bool = True) 
         HARD_DEADLINE = int(os.environ.get("SCRAPE_HARD_DEADLINE_SEC", "90"))
         _ex = _cf.ThreadPoolExecutor(max_workers=1)
 
+        # Firecrawl's own maxAge cache: for STABLE supplier pages, reuse Firecrawl's
+        # snapshot for up to 7 days (cheap, fast). But aggregator seller tables
+        # (net32/supplyclinic) and fast-moving stores (crazydentalprices) change
+        # their prices hourly — for those, force a LIVE fetch (maxAge=0), else
+        # Firecrawl returns a days-old snapshot and we report stale prices even
+        # after purging our OWN cache ($203.85 when net32 live shows $196.28).
+        _fresh = _aggregator_domain(c.url) or _fresh_price_domain(c.url)
+        _max_age = 0 if _fresh else int(
+            os.environ.get("FIRECRAWL_MAX_AGE_MS", str(7 * 24 * 60 * 60 * 1000)))
+        # Amazon/Walmart/eBay serve a bot-detection JS shell ("No product info",
+        # "Adding to Cart…") to a normal fetch, so their product/price never gets
+        # read and every listing is rejected. The Firecrawl STEALTH proxy renders
+        # like a real browser and gets the true product page. It's pricier (~5×
+        # credits) and slower, so it's used ONLY for the marketplace domains that
+        # need it, and a fresh fetch (maxAge=0) so the stealth render isn't wasted
+        # on a stale snapshot. Tunable via MARKETPLACE_STEALTH=0.
+        _mkt = getattr(c, "marketplace", None) or _domain(c.url) in (
+            "amazon.com", "walmart.com", "ebay.com")
+        _stealth = _mkt and os.environ.get("MARKETPLACE_STEALTH", "1") not in ("0", "false", "False")
+        _body = {
+            "url": c.url,
+            "formats": ["markdown", "rawHtml"],
+            "onlyMainContent": True,
+            "waitFor": 5000 if _stealth else 3000,
+            "timeout": 45000,
+            "maxAge": 0 if _stealth else _max_age,
+        }
+        if _stealth:
+            _body["proxy"] = "stealth"
+
         def _do_post():
             return requests.post(
                 "https://api.firecrawl.dev/v2/scrape",
                 headers={"Authorization": f"Bearer {FIRECRAWL_KEY}",
                          "Content-Type": "application/json"},
-                json={
-                    "url": c.url,
-                    "formats": ["markdown", "rawHtml"],
-                    "onlyMainContent": True,
-                    "waitFor": 3000,
-                    "timeout": 45000,
-                    "maxAge": int(os.environ.get("FIRECRAWL_MAX_AGE_MS", str(7 * 24 * 60 * 60 * 1000))),
-                },
+                json=_body,
                 timeout=(15, 60),
             )
 
@@ -2354,7 +2964,11 @@ def firecrawl_verify(c: PriceCandidate, sku: str = "", allow_paid: bool = True) 
     # "log in for account pricing" prompts must NOT trip the login-wall rejection
     # (doing so dropped genuinely-priceable net32 pages). Skip both rejections for
     # those domains — the seller-table parser is the source of truth there.
-    is_aggregator = bool(_aggregator_domain(c.url))
+    # Marketplace PDPs (Amazon /dp/, Walmart /ip/, eBay /itm/) are treated like
+    # aggregators here: they ALWAYS carry "Sign in" boilerplate although the buy
+    # price is public, so the login heuristics would wrongly drop them. A page
+    # with genuinely no price still fails downstream (extraction → price sanity).
+    is_aggregator = bool(_aggregator_domain(c.url)) or bool(getattr(c, "marketplace", None))
     if hard_gate and not is_aggregator:
         # The price slot itself is gated ("login to see price"). Whatever "$" we
         # scraped is a promo / related-item / metadata artifact, never the buy
@@ -2394,16 +3008,50 @@ def firecrawl_verify(c: PriceCandidate, sku: str = "", allow_paid: bool = True) 
     # only governs how much markdown the variant-anchor can reach.
     MD_CAP = int(os.environ.get("SCRAPE_MD_CAP", "10000"))
     OVERSIZE = int(os.environ.get("SCRAPE_OVERSIZE_REJECT", "150000"))
+    # Marketplace PDPs are enormous (an Amazon /dp/ page easily exceeds 150k chars
+    # of markdown) but their URL pattern already guarantees a product page — the
+    # oversize guard exists to drop CATEGORY pages, so it must not fire here.
+    if getattr(c, "marketplace", None):
+        OVERSIZE = max(OVERSIZE, 600000)
     if len(markdown) > OVERSIZE:
         log.info("%soversized page (%d chars) — almost certainly a category/search "
                  "listing, not a product page; skipping extraction", tag, len(markdown))
         c.notes = "skipped — page too large to be a product listing (category/search page)"
         return c
+    # eBay's main-content markdown is mostly payment/shipping boilerplate — the
+    # product title and condition live in the page's structured data / metadata.
+    # Surface both as leading text lines so the LLM can judge the match and the
+    # new-condition-only gate can run (cache hits keep the lines too).
+    if getattr(c, "marketplace", None) == "ebay":
+        prefix = ""
+        page_title = ((payload.get("metadata") or {}).get("title") or c.title or "").strip()
+        if page_title and page_title.lower()[:40] not in main.lower()[:600]:
+            prefix += f"# {page_title}\n"
+        cond = _ebay_condition(payload.get("rawHtml") or payload.get("html") or "")
+        if cond:
+            prefix += f"Condition: {cond}\n"
+            log.info("%sebay condition from structured data: %s", tag, cond)
+        main = prefix + main
     c.scraped_markdown = main[:MD_CAP]          # reuse the already-stripped main content
+    # deterministic category-page rejection (fresh scrapes) — see cache-hit path
+    if not _aggregator_domain(c.url) and _looks_category_page(main):
+        log.info("%scategory/list page — rejected: %s", tag, c.url[:80])
+        c.match_type = "rejected"
+        c.rejected_reason = "category/list page (site listing controls detected) — never a product match"
+        c.price = None
+        if SCRAPE_CACHE_ENABLED:
+            try:
+                from . import db
+                db.save_scrape(c.url, main[:int(os.environ.get("SCRAPE_CACHE_MD_CAP", "150000"))])
+            except Exception:
+                pass
+        return c
     # Deterministic aggregator price (net32 / supplyclinic): parse the FULL main
     # content (before the MD_CAP truncation) so every seller row is seen, even
     # when the stored markdown is capped at 6000 chars.
     _apply_aggregator_lock(c, main, tag)
+    _prefer_public_price(c, main)               # tdsc-style member pricing → public price
+    _prefer_sale_price(c, main)                 # was/now sale the structured data missed
     # Persist immediately so a later freeze/crash never loses this fetched page
     # — a re-run reads it from cache for 0 credits. STORE THE FULL stripped main
     # (not the MD_CAP-truncated slice): the aggregator table parser on a CACHE
@@ -2412,7 +3060,15 @@ def firecrawl_verify(c: PriceCandidate, sku: str = "", allow_paid: bool = True) 
         try:
             from . import db
             cache_cap = int(os.environ.get("SCRAPE_CACHE_MD_CAP", "150000"))
-            db.save_scrape(c.url, main[:cache_cap])
+            # Persist the single-offer structured price as a marker, exactly like
+            # the free-fetch path — without it a JS-priced page (frontierdental
+            # $258.70, Walmart $16.45) loses its price on every warm cache hit.
+            prefix = ""
+            if getattr(c, "price_structured", False) and c.price:
+                prefix = _sprice_marker(c.price) + "\n"
+            if getattr(c, "structured_name", None):
+                prefix += _sname_marker(c.structured_name) + "\n"
+            db.save_scrape(c.url, (prefix + main)[:cache_cap])
         except Exception:
             pass
     log.info("%sscrape SUCCESS (markdown, stored %d of %d chars) — %s",

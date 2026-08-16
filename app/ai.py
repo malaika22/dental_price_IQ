@@ -89,8 +89,36 @@ else:
 
 from .models import OrderLineItem, PriceCandidate
 from . import db
+from .jobs import emit, emit_quota_limit
 
 log = logging.getLogger(__name__)
+
+_LLM_LABELS = {
+    "groq": "Groq",
+    "gemini": "Gemini",
+    "openai": "OpenAI",
+    "openrouter": "OpenRouter",
+}
+
+
+def _trip_llm_circuit_breaker(log_msg: str, *log_args) -> None:
+    _groq_cb["tripped_until"] = time.monotonic() + GROQ_CB_COOLDOWN
+    log.error(log_msg, *log_args)
+    label = _LLM_LABELS.get(LLM_PROVIDER, LLM_PROVIDER.title())
+    if LLM_PROVIDER == "gemini":
+        emit_quota_limit(
+            "gemini",
+            "Gemini tokens exhausted — please add more tokens to your Gemini account.",
+            kind="tokens",
+            detail="Open Google AI Studio / Cloud Console, top up Gemini API quota, then re-run the analysis.",
+        )
+    else:
+        emit_quota_limit(
+            LLM_PROVIDER,
+            f"Your {label} API credit or rate limit has been reached.",
+            kind="rate_limit",
+            detail="AI enrichment may be reduced until the limit resets.",
+        )
 
 # Model list follows the active provider's preset, overridable by LLM_MODELS
 # (universal). The legacy GROQ_MODELS/GROQ_MODEL vars apply ONLY when the provider
@@ -486,9 +514,10 @@ def _ask_json_rotate(messages: list, est: int, max_tokens: int) -> dict:
         # every model cooling down for longer than the backoff cap → give up fast
         if MODELS and all(cooldown.get(m, 0.0) > time.monotonic() for m in MODELS):
             if max(cooldown.values()) - time.monotonic() > MAX_BACKOFF:
-                _groq_cb["tripped_until"] = time.monotonic() + GROQ_CB_COOLDOWN
-                log.error("Groq all models rate-limited (rotate) — tripping circuit "
-                          "breaker for %ss", GROQ_CB_COOLDOWN)
+                _trip_llm_circuit_breaker(
+                    "Groq all models rate-limited (rotate) — tripping circuit breaker for %ss",
+                    GROQ_CB_COOLDOWN,
+                )
                 raise RuntimeError("Groq all-models rate-limited; circuit breaker tripped")
     raise RuntimeError(f"All Groq models exhausted (rotate): {last_err}")
 
@@ -623,11 +652,13 @@ def _ask_json(prompt: str, max_tokens: int = 4000, force_model: str | None = Non
                                         "looping back to %s", model, cycle + 1,
                                         GROQ_MAX_CYCLES, MODELS[0])
                             break
-                        _groq_cb["tripped_until"] = time.monotonic() + GROQ_CB_COOLDOWN
-                        log.error("Groq exhausted after %d cycles — tripping circuit breaker "
-                                  "for %ss; calls fail fast so the run finishes (candidates "
-                                  "left for manual extraction this window)", GROQ_MAX_CYCLES,
-                                  GROQ_CB_COOLDOWN)
+                        _trip_llm_circuit_breaker(
+                            "Groq exhausted after %d cycles — tripping circuit breaker for %ss; "
+                            "calls fail fast so the run finishes (candidates left for manual "
+                            "extraction this window)",
+                            GROQ_MAX_CYCLES,
+                            GROQ_CB_COOLDOWN,
+                        )
                         raise RuntimeError("Groq all-models rate-limited; circuit breaker tripped")
                     log.warning("Groq %s rate-limited (429) — waiting %ss (attempt %d/%d)",
                                 model, round(backoff), attempt + 1, MAX_RETRIES)
@@ -754,20 +785,27 @@ Order lines:
 
 def parse_items_batch(items: List[OrderLineItem], chunk_size: int = 12) -> List[OrderLineItem]:
     """Batched parsing. Chunked to stay inside free-tier output-token limits."""
+    emit("groq", action="start", phase="parse_batch", provider=LLM_PROVIDER,
+         items=len(items), message=f"{LLM_PROVIDER.upper()} parsing {len(items)} product descriptions")
     by_sku = {}
     for start in range(0, len(items), chunk_size):
         chunk = items[start:start + chunk_size]
         lines = "\n".join(
             f'{i.schein_sku} | "{i.description}" | UOM {i.uom}' for i in chunk
         )
+        emit("groq", action="chunk", phase="parse_batch", provider=LLM_PROVIDER,
+             chunk=start // chunk_size + 1, items=len(chunk))
         try:
             data = _ask_json(PARSE_PROMPT.format(lines=lines), max_tokens=4000)
         except Exception:
             log.exception("Groq parse chunk failed (items %d–%d) — falling back to raw descriptions",
                           start + 1, start + len(chunk))
+            emit("groq", action="chunk_failed", phase="parse_batch", provider=LLM_PROVIDER)
             continue
         for d in _results(data):
             by_sku[str(d.get("sku"))] = d
+    emit("groq", action="complete", phase="parse_batch", provider=LLM_PROVIDER,
+         items=len(items), message=f"{LLM_PROVIDER.upper()} enrichment complete")
     for it in items:
         d = by_sku.get(it.schein_sku, {})
         it.brand = d.get("brand")
@@ -1033,7 +1071,13 @@ def extract_and_validate_batch(item, candidates: List[PriceCandidate]) -> None:
     log.info("SKU %s — %d scraped page(s): %d cache hit(s), %d to extract",
              item.schein_sku, len(pending), hits, len(todo))
     if not todo:
+        emit("groq", action="cache_only", phase="extract_validate", provider=LLM_PROVIDER,
+             sku=item.schein_sku, pages=len(pending))
         return
+
+    emit("groq", action="start", phase="extract_validate", provider=LLM_PROVIDER,
+         sku=item.schein_sku, pages=len(todo), cache_hits=hits,
+         message=f"{LLM_PROVIDER.upper()} validating {len(todo)} page(s) for SKU {item.schein_sku}")
 
     # GROQ EXTRACT CAP (speed, accuracy-preserving): validating a page that ALREADY
     # has a deterministic price (aggregator lock or single-offer structured) is a
@@ -1198,6 +1242,9 @@ def extract_and_validate_batch(item, candidates: List[PriceCandidate]) -> None:
     for start in range(0, len(todo), CHUNK):
         _run(todo[start:start + CHUNK], PER_PAGE)
     _escalate(todo)
+    emit("groq", action="complete", phase="extract_validate", provider=LLM_PROVIDER,
+         sku=item.schein_sku, pages=len(todo),
+         message=f"{LLM_PROVIDER.upper()} validation done for SKU {item.schein_sku}")
     return
 
 

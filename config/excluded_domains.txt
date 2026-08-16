@@ -2,8 +2,6 @@
 # excluded automatically. Client-editable — no code changes needed.
 henryschein.com
 ebay.com
-amazon.com
-walmart.com
 alibaba.com
 aliexpress.com
 google.com
@@ -17,6 +15,8 @@ youtube.com
 # or login-walled product pages, and pollute the alternate sheet. Subdomains are
 # excluded automatically, so the whole Kroger family (ralphs, kingsoopers, …) is
 # covered by their own lines below.
+# NOTE: amazon.com / walmart.com are managed via Admin → Supplier Sources
+# (marketplace type) and are intentionally NOT listed here when enabled.
 target.com
 kroger.com
 ralphs.com
@@ -32,4 +32,5 @@ officesupplyinc.com
 parentgiving.com
 gosupps.com
 instacart.com
-kingpintattoosupply.com
+# darbydental — members/VIP-only pricing, not a public street price (client 2026-07-15)
+darbydental.com

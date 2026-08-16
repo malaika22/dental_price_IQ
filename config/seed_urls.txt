@@ -45,7 +45,7 @@
 7120116 | https://www.net32.com/ec/gum-technique-deep-clean-toothbrush-compact-head-d-133049
 # 8969286  Premium Cotton Rolls #2 Non-Sterile 2000/Bx  <=  Premium Cotton Rolls #2 Non-Sterile 2000/Bx (ov 7)
 8969286 | https://www.tdsc.com/All-Categories/Dental-Supplies/Disposable-Products/Cotton-Rolls-%26-Alternatives/Premium-Non-Sterile-Cotton-Rolls/p/190419-1?ab_version=A&srsltid=AfmBOoqZhI6I4zrBDKyLWkQYWzPZwnWXiCBbq5WeLxzoHkYBrsv67i_OZA4
-8969286 | https://www.fireflysupply.com/products/henry-schein-size-2-medium-premium-cotton-rolls-1-5-length-0-375-diameter-2000-box-non-sterile-white-latex-free-ideal-for-dental-and-medical-use?variant=49006093893884&srsltid=AfmBOop0rBjNNlulOm_qzurv_KiWl7eas7lpaaBQOVq3bjqbHrLi6Xt0y00
+8969286 | https://www.fireflysupply.com/products/henry-schein-size-2-medium-premium-cotton-rolls-1-5-length-0-375-diameter-2000-box-non-sterile-white-latex-free-ideal-for-dental-and-medical-use?variant=49006093893884
 8969286 | https://www.graylinemedical.com/products/henry-schein-cotton-roll-premium-hsi-medium-size-2-ns-0375-in-15-in-2000-bx-12-bx-ca8969286?variant=19330869755961&srsltid=AfmBOopbg06bzm6UDIAuUcPqoziBk_mBSsBMxff7xp5q3rexMcseFCA7TeI
 # 7772551  3M Clinpro Clear Fluoride Trtm No Flavor 100/Pk  <=  3M Clinpro Clear Fluoride Trtm No Flavor 100 (ov 8)
 7772551 | https://dentalwholesaledirect.com/preventives/3m-clinpro-clear-fluoride-treatment-7310ff-flavorless-0-5-ml-unitdose-100-pac/
@@ -114,3 +114,64 @@
 1126830 | https://afteractionmedical.com/shop/criterion-n300-ultra-nitrile-exam-gloves/
 # 1126831 Criterion M — genuine reseller (mfidistribution shows SKU 1126831)
 1126831 | https://www.mfidistribution.com/criterion-n300-nitrile-exam-gloves-medium-standard
+
+# Marketplace reference listings (Dr Paul sheet QA, verified live 2026-07-14).
+# Only the marketplace row path reads these (the regular sweep skips excluded
+# marketplace domains). All three are ABOVE-Schein reference prices.
+# 1126830 Criterion N300 Glove S 300/Bx — Walmart page resolves to Small/300 despite XL slug
+1126830 | https://www.walmart.com/ip/Henry-Schein-Criterion-N300-Ice-Blue-Nitrile-Exam-Gloves-Chlorinated-Non-Sterile-Disposable-LATEX-FREE-250-Box-X-Large/8341567272
+# 1403081 CaviWipes 2.0 160/Cn — Metrex, 160 count
+1403081 | https://www.walmart.com/ip/Metrex-CaviWipes-2-0-Disinfecting-Wipes-160-Count/5392688034
+# 9872474 Sharps Container 3 Gal — BD, MPN 305436
+9872474 | https://www.walmart.com/ip/Becton-Dickinson-Sharps-Container-1-Piece-16-H-X-13-1-2-W-6-D-Inch-3-Gallon-Red-Horizontal-Entry-Lid-305436-SOLD-BY-PACK-OF-ONE/160130701
+
+# 3865728 Speedclean 16oz — genuine Midmark bottle at a tattoo-supply shop the
+# exclusion list used to drop (client QA 2026-07-15 asked for it)
+3865728 | https://www.kingpintattoosupply.com/products/speedclean-autoclave-cleaner-16-oz
+
+# 8969286 Cotton Rolls — House Brand Dentistry 2000/Bx on Walmart (same pack,
+# generic; house-brand-generic marketplace rule 2026-07-15 needs the candidate)
+8969286 | https://www.walmart.com/ip/House-Brand-Dentistry-100222-Absorbable-Dental-Cotton-Rolls-2-2000-Bx/243208408
+
+# QA 2026-07-15 — reference-sheet links the run missed by discovery variance:
+# 8969286 Cotton Rolls — Mark3 generic (cheaper than practicon), house-brand order
+8969286 | https://dentalwholesaledirect.com/disposables/cotton-rolls-non-sterile-2-2000-bx/
+# 8969286 Cotton Rolls — fireflysupply Henry Schein Premium (exact HS SKU 8969286)
+8969286 | https://www.fireflysupply.com/products/henry-schein-size-2-medium-premium-cotton-rolls-1-5-length-0-375-diameter-2000-box-non-sterile-white-latex-free-ideal-for-dental-and-medical-use?variant=49006093893884
+# 1392761 S3+ Mask — crazydental S3160K (search surfaced the wrong Earloop mask)
+1392761 | https://www.crazydentalprices.com/S3-S3160K
+# 1392761 S3+ Mask — net32 S3160K
+
+# QA 2026-07-15 — Walmart listings the marketplace search missed (wrong ones surfaced):
+# 7120116 GUM Deep Clean Soft Compact 12/Bx — the correct Pack-of-12 (search found 3-pack/6-pack)
+7120116 | https://www.walmart.com/ip/GUM-Technique-Deep-Clean-Toothbrush-Compa-Count-Head-Soft-Bristles-1-Count-Pack-of-12/17915458695
+# 1024081 Tray Cover — Henry Schein same product, different color (ordered Aqua)
+1024081 | https://www.walmart.com/ip/Henry-Schein-Tray-Covers-8-5-x-12-25-White-Paper-Disposable-Latex-Free-1000-Case-Fits-Ritter-B-Trays-Ideal-for-Medical-and-Dental-Use/17671722648
+1024081 | https://www.walmart.com/ip/Henry-Schein-Tray-Covers-8-5-x-12-25-Lavender-Paper-Disposable-Latex-Free-1000-Case-Fits-Ritter-B-Trays-Ideal-Medical-Dental-Use/17695858140
+
+# QA 2026-07-15 — Fuji A3 50-pk EXPORT (000140) marketplace listings the search
+# missed (they came from Google Shopping ads, not eBay/Amazon native search):
+# 3333466 — eBay 50-pk New $180 (bulk value vs ordered 48-pk)
+3333466 | https://www.ebay.com/itm/234660627562
+# 3333466 — Amazon GC-000140 50-pk export
+3333466 | https://www.amazon.com/GC-000140-Ionomer-Restorative-Capsules/dp/B0GD8F6TGH
+
+# QA 2026-07-15 — Amazon listings the SerpAPI amazon SEARCH missed (returned other
+# ASINs); operator-verified, priced via amazon_product engine by ASIN:
+# 7772551 Clinpro — 3M ESPE 7210FF (MPN match), $279.08
+7772551 | https://www.amazon.com/3M-ESPE-Fluoride-Treatment-Flavorless/dp/B0GFNX2NYB
+# 9872474 Sharps — BD 305436 (MPN match), $20.76
+9872474 | https://www.amazon.com/Patient-Room-Sharps-Collectors-305436/dp/B00188HMIG
+# 7120116 GUM — Adult Sensitive Compact (variant differs from ordered Soft), $39.93
+7120116 | https://www.amazon.com/Adult-Premium-Sensitive-Compact-Toothbrush/dp/B0DK7PMM66
+
+# 1077811 Gutta Percha CC Feath Spilprf Fine-Med 100/Bx — Render discovery
+# misses the product-specific Crazy Dental page (finds the category page instead)
+1077811 | https://www.crazydentalprices.com/Gutta-Percha-Points-13986
+1077811 | https://www.net32.com/ec/kerr-finemedium-gutta-percha-points-100-individual-d-26755
+1077811 | https://www.supplyclinic.com/items/gutta-percha-points-120-pk-100-dentsply-sirona-670941
+# 1078836 Neotray Anterior 30/Bx — Render organic returns mostly off-topic
+# impression tray results; these are the correct Premier Neotray pages
+1078836 | https://chasedentalsupply.com/premier-dental-neotray-anterior-30-bx-premier/
+1078836 | https://ddsdentalsupplies.com/premier-neotray-impression-tray-anterior-30-bx/
+1078836 | https://allstardentalsupply.com/products/neotray-anterior-30-bx-premier
