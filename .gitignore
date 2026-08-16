@@ -6,13 +6,18 @@ venv/
 __pycache__/
 *.pyc
 
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+
 # Environment variables
 .env
+.env.bak
+.env.local
 
 # macOS
 .DS_Store
-
-.env
 
 # AGG_DEBUG artifacts (full scraped page markdown — large, not for VCS)
 output/agg_debug/
